@@ -1,0 +1,13 @@
+# outputs
+abyss_out/
+fence_captures/
+run_*/
+rec_*/
+*.mp4
+*.usd
+!assets/**/*.usd
+# python
+__pycache__/
+*.pyc
+# trained policies (large / regenerate)
+*.pt
