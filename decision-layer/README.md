@@ -41,6 +41,7 @@ uses its rule-based version; responses say which one answered.
 ## Run
 
 ```bash
+npm run setup                 # asks for keys (hidden), checks them, then runs everything end to end
 npm run serve                 # API on http://localhost:8787
 npm run cli -- demo           # print the demo beats
 npm run cli -- curator        # run the curator once

@@ -90,8 +90,9 @@ export async function runCurator(store: Store, day: number): Promise<{ proposals
     tools: {
       finding_stats: tool({
         description: 'Review outcomes per finding kind and confidence band, with each finding and whether the same cell was later confirmed.',
-        inputSchema: z.object({}),
-        execute: async () => stats,
+        // Gemini rejects function declarations with an empty object schema, so the tool takes an optional filter.
+        inputSchema: z.object({ kind: z.enum(['fraying', 'chafe', 'distortion', 'hole']).optional().describe('Only this finding kind') }),
+        execute: async ({ kind }) => (kind ? stats.filter((s) => s.kind === kind) : stats),
       }),
       propose_change: tool({
         description: `Propose one allowed change for a person to accept. Allowed: ${Object.keys(ALLOWED).join(', ')} (re-image fraying findings below 0.6 confidence instead of sending them to operator review).`,
