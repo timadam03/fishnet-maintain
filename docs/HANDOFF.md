@@ -2,6 +2,8 @@
 
 Date: 2026-11-27.
 For: the teammate taking over the design of the agent fleet build.
+**Update 2026-11-27: the scope is now a 1-day hackathon demo. Build from [`demo-spec.md`](demo-spec.md).** It settles what §5 below left open: TypeScript decision layer, SQLite, scenario-tagged mock data, weighted-points net risk, d1 for two questions, and Gemini for the investigator and curator agents. Agents run in plain code, not LangSmith Fleet, for the demo.
+
 Companion doc: [`decision-layer-design.md`](decision-layer-design.md) is the full design, research and sources. This handoff tells you what's in it, what's decided, what's open and where to start.
 
 ---
