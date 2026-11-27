@@ -131,7 +131,16 @@ UI_WALL_ROWS = 8          # must equal WALL_ROWS in web/src/data/model.ts
 RUN_ID = time.strftime("%Y%m%dT%H%M%S")   # stamped into every capture record
 MESH_SPACING = 0.25 if args.lite else (0.1 if args.hq else 0.15)   # visual net mesh size [m]
 TWINE_W, ROPE_W = 0.018, 0.05
-N_HOLES, N_FOULED = 3, 4  # injected defects (ground truth goes into the metadata)
+# Injected defects (ground truth goes into the metadata). Sparse on purpose: a first pass is
+# meant to surface a few weak areas worth re-inspecting, not to label every panel. Patches live
+# in (u, v) arc-length space so they straddle panel borders instead of looking panel-shaped.
+N_HOLES = 4                             # cut-through holes, mixed sizes
+N_THIN = 3                              # abraded / thinning twine: the precursor to a hole
+N_FOUL = 4                              # biofouling and mould growth
+HOLE_RADII = (0.10, 0.16, 0.28, 0.45)   # m, one per hole: mostly small, one obvious
+THIN_RADIUS = (0.75, 1.25)              # m, patch radius range
+FOUL_RADIUS = (0.60, 1.10)              # m, patch radius range
+DEFECT_BUDGET = 0.10                    # refuse to build a net more defective than this
 SEABED_Z = -20.0
 
 N_AUV = 3
@@ -272,8 +281,11 @@ def torus(path, major, minor, z, mat, nu=160, nv=16):
 
 # ----------------------------------------------------------------------------- materials
 M = {
-    "net": make_mat("net", (0.04, 0.09, 0.07), rough=0.75),
-    "net_fouled": make_mat("net_fouled", (0.16, 0.24, 0.06), rough=0.9),
+    # Light twine against the dark teal fog: the net has to separate from the background, or a
+    # classifier trained on these frames learns the haze instead of the mesh.
+    "net": make_mat("net", (0.50, 0.46, 0.37), rough=0.75),
+    "net_thin": make_mat("net_thin", (0.61, 0.58, 0.51), rough=0.7),
+    "net_fouled": make_mat("net_fouled", (0.29, 0.23, 0.10), rough=0.95),
     "rope": make_mat("rope", (0.16, 0.12, 0.07), rough=0.8),
     "hdpe": make_mat("hdpe", (0.03, 0.03, 0.03), rough=0.35),
     "steel": make_mat("steel", (0.55, 0.57, 0.6), rough=0.3, metal=0.9),
@@ -372,23 +384,102 @@ def cyl(u, v):
     return np.array([CAGE_R * math.cos(th), CAGE_R * math.sin(th), v])
 
 
-# pick defects (ground truth)
-all_panels = [(r, c) for r in range(N_ROWS) for c in range(N_COLS)]
-hole_panels = [all_panels[i] for i in rng.choice(len(all_panels), N_HOLES, replace=False)]
-fouled_panels = {all_panels[i] for i in rng.choice(len(all_panels), N_FOULED, replace=False)}
+# ----------------------------------------------------------------------------- defects
+# Ground truth. (u, v) = arc length around the pen and depth; u wraps at the circumference.
+U_MAX = 2 * math.pi * CAGE_R
+
+
+def du(a, b):
+    """Shortest distance along the circumference between two u coordinates."""
+    d = abs(a - b) % U_MAX
+    return min(d, U_MAX - d)
+
+
+def patch_dist(u, v, pu, pv):
+    return math.hypot(du(u, pu), v - pv)
+
+
+def panel_of(u, v):
+    col = int((u / CAGE_R) % (2 * math.pi) // DTH_PANEL) % N_COLS
+    return min(N_ROWS - 1, max(0, int(-v // PANEL_H))), col
+
+
+def place_patches(n, rmin, rmax, taken, margin=0.5):
+    """Centres kept apart and clear of the top and bottom ropes, so patches stay distinct."""
+    out = []
+    for _ in range(n):
+        for _try in range(400):
+            r = float(rng.uniform(rmin, rmax))
+            u = float(rng.uniform(0, U_MAX))
+            v = float(rng.uniform(-CAGE_DEPTH + r + 0.4, -r - 0.4))
+            if all(patch_dist(u, v, pu, pv) > r + pr + margin for pu, pv, pr in taken + out):
+                out.append((u, v, r))
+                break
+    return out
+
+
+THIN = place_patches(N_THIN, THIN_RADIUS[0], THIN_RADIUS[1], taken=[])
+FOUL = place_patches(N_FOUL, FOUL_RADIUS[0], FOUL_RADIUS[1], taken=THIN)
+
+# The first holes open inside thinning patches, the way a real net fails where it is already
+# abraded; the rest appear on their own. That correlation is something the decision layer can
+# learn to act on -- thinning seen today is where to look again next week.
 HOLES = []  # (row, col, u, v, radius)
-for (r, c) in hole_panels:
-    u0, v1 = c * DTH_PANEL * CAGE_R, -r * PANEL_H
-    u = rng.uniform(u0 + 0.7, u0 + DTH_PANEL * CAGE_R - 0.7)
-    v = rng.uniform(v1 - PANEL_H + 0.7, v1 - 0.7)
-    HOLES.append((r, c, u, v, rng.uniform(0.25, 0.45)))
+for i, hr in enumerate(HOLE_RADII[:N_HOLES]):
+    if i < min(2, len(THIN)):
+        pu, pv, pr = THIN[i]
+        a = float(rng.uniform(0, 2 * math.pi))
+        d = float(rng.uniform(0, max(0.0, pr - hr - 0.1)))
+        u = (pu + d * math.cos(a)) % U_MAX
+        v = min(-hr - 0.3, max(-CAGE_DEPTH + hr + 0.3, pv + d * math.sin(a)))
+    else:
+        u = float(rng.uniform(0, U_MAX))
+        v = float(rng.uniform(-CAGE_DEPTH + hr + 0.4, -hr - 0.4))
+    r, c = panel_of(u, v)
+    HOLES.append((r, c, u, v, float(hr)))
+
+NET_AREA = U_MAX * CAGE_DEPTH
+DEFECT_AREA = (sum(math.pi * r * r for _, _, r in THIN + FOUL)
+               + sum(math.pi * h[4] * h[4] for h in HOLES))
+DEFECT_FRAC = DEFECT_AREA / NET_AREA
+if DEFECT_FRAC > DEFECT_BUDGET:
+    raise SystemExit(f"defects cover {DEFECT_FRAC:.1%} of the net, over the "
+                     f"{DEFECT_BUDGET:.0%} budget -- lower N_THIN / N_FOUL or the radii")
+
+
+def thin_at(u, v):
+    """0 outside every thinning patch, 1 at a centre, smooth in between."""
+    return max([0.0] + [1.0 - (patch_dist(u, v, pu, pv) / pr) ** 2
+                        for pu, pv, pr in THIN if patch_dist(u, v, pu, pv) < pr])
+
+
+def foul_at(u, v):
+    """Same, for biofouling growth."""
+    return max([0.0] + [1.0 - (patch_dist(u, v, pu, pv) / pr) ** 2
+                        for pu, pv, pr in FOUL if patch_dist(u, v, pu, pv) < pr])
+
+
+def lump(u, v):
+    """Deterministic 0..1 noise, so growth clumps at some crossings instead of coating evenly."""
+    s = math.sin(u * 12.9898 + v * 78.233) * 43758.5453
+    return s - math.floor(s)
 
 
 def build_panel(row, col):
     u0, u1 = col * DTH_PANEL * CAGE_R, (col + 1) * DTH_PANEL * CAGE_R
     v1 = -row * PANEL_H
     v0 = v1 - PANEL_H
-    holes = [(hu, hv, hr) for (r, c, hu, hv, hr) in HOLES if (r, c) == (row, col)]
+    def near_u(x):
+        """x shifted a whole circumference if that puts it beside this panel (u wraps)."""
+        for s in (-U_MAX, 0.0, U_MAX):
+            if u0 - 2.0 <= x + s <= u1 + 2.0:
+                return x + s
+        return x
+
+    # Any hole that reaches this panel, not just one centred in it, so a hole on a border cuts
+    # both panels instead of stopping at the seam.
+    holes = [(near_u(hu), hv, hr) for (r, c, hu, hv, hr) in HOLES
+             if du((u0 + u1) / 2, hu) < (u1 - u0) / 2 + hr and abs((v0 + v1) / 2 - hv) < (v1 - v0) / 2 + hr]
     step = MESH_SPACING * math.sqrt(2)
     segs = []
     k = math.ceil((u0 - v1) / step)          # diagonals u - v = c
@@ -408,26 +499,53 @@ def build_panel(row, col):
     segs += [((u0, v1), (u1, v1), ROPE_W, False), ((u0, v0), (u1, v0), ROPE_W, False),
              ((u0, v0), (u0, v1), ROPE_W, False)]
 
+    # Twine is split by condition, not by panel: one mesh per material so a patch of growth or
+    # abrasion reads as a patch, instead of turning a whole 30-degree panel a different colour.
     store = {"pts": [], "counts": [], "idx": []}
+    thin_store = {"pts": [], "counts": [], "idx": []}
+    foul_store = {"pts": [], "counts": [], "idx": []}
     rope_store = {"pts": [], "counts": [], "idx": []}
-    piece = 0.06 if holes else 0.4
+    cu, cv, hu_, hv_ = (u0 + u1) / 2, (v0 + v1) / 2, (u1 - u0) / 2, (v1 - v0) / 2
+    touched = any(du(cu, pu) < hu_ + pr and abs(cv - pv) < hv_ + pr for pu, pv, pr in THIN + FOUL)
+    piece = 0.06 if holes else (0.12 if touched else 0.4)
     for (a, b, w, cuttable) in segs:
         a, b = np.array(a), np.array(b)
         n = max(1, math.ceil(np.linalg.norm(b - a) / piece))
         for s in range(n):
             pa, pb = a + (b - a) * s / n, a + (b - a) * (s + 1) / n
             mid = (pa + pb) / 2
-            if cuttable and any(math.hypot(mid[0] - hu, mid[1] - hv) < hr for hu, hv, hr in holes):
-                continue
             thm = mid[0] / CAGE_R
             normal = np.array([math.cos(thm), math.sin(thm), 0.0])
-            add_ribbon(store if cuttable else rope_store, cyl(*pa), cyl(*pb), normal, w)
+            if not cuttable:
+                add_ribbon(rope_store, cyl(*pa), cyl(*pb), normal, w)
+                continue
+            if any(math.hypot(mid[0] - hu, mid[1] - hv) < hr for hu, hv, hr in holes):
+                continue
+            um, vm = mid[0] % U_MAX, mid[1]
+            f, t = foul_at(um, vm), thin_at(um, vm)
+            if f > 0.12:
+                # Growth adds bulk unevenly: heavy clumps at some crossings, bare twine between.
+                target = foul_store
+                width = w * min(4.5, 1.0 + 3.2 * f * (0.3 + lump(um, vm)))
+            elif t > 0.25:
+                # Abrasion takes it away: down to about a third of the twine at the centre.
+                target, width = thin_store, w * (1.0 - 0.68 * t)
+            else:
+                target, width = store, w * (1.0 - 0.25 * t)
+            add_ribbon(target, cyl(*pa), cyl(*pb), normal, width)
 
     path = f"/World/Cage/Net/panel_r{row}_c{col:02d}"
     mesh = make_mesh(path, store["pts"], store["counts"], store["idx"], double_sided=True)
-    bind(mesh, M["net_fouled"] if (row, col) in fouled_panels else M["net"])
+    bind(mesh, M["net"])
     UsdPhysics.CollisionAPI.Apply(mesh.GetPrim())
     UsdPhysics.MeshCollisionAPI.Apply(mesh.GetPrim()).CreateApproximationAttr("none")
+    for suffix, sub, mat in (("_thin", thin_store, M["net_thin"]), ("_fouled", foul_store, M["net_fouled"])):
+        if not sub["pts"]:
+            continue
+        extra = make_mesh(path + suffix, sub["pts"], sub["counts"], sub["idx"], double_sided=True)
+        bind(extra, mat)
+        UsdPhysics.CollisionAPI.Apply(extra.GetPrim())
+        UsdPhysics.MeshCollisionAPI.Apply(extra.GetPrim()).CreateApproximationAttr("none")
     ropes = make_mesh(path + "_ropes", rope_store["pts"], rope_store["counts"], rope_store["idx"], double_sided=True)
     bind(ropes, M["rope"])
 
@@ -622,8 +740,16 @@ def label(theta, z):
     holes = [{"panel": f"r{r}_c{c:02d}", "theta": hu / CAGE_R, "z": hv, "radius": hr}
              for (r, c, hu, hv, hr) in HOLES
              if abs(wrap(hu / CAGE_R - theta)) * CAGE_R < FOOT_W / 2 and abs(hv - z) < FOOT_H / 2]
+    # How much of what this camera sees is affected, sampled over the footprint. The classifier
+    # is scored against these, so they are fractions rather than a panel-wide yes/no.
+    uc = theta * CAGE_R
+    pts = [((uc + (i / 3.0 - 0.5) * FOOT_W) % U_MAX, z + (j / 3.0 - 0.5) * FOOT_H)
+           for i in range(4) for j in range(4)]
+    foul_frac = sum(1 for (pu, pv) in pts if foul_at(pu, pv) > 0.12) / len(pts)
+    thin_frac = sum(1 for (pu, pv) in pts if thin_at(pu, pv) > 0.25) / len(pts)
     return {"panel": f"r{row}_c{col:02d}", "cell": ui_cell(theta, z),
-            "fouled": (row, col) in fouled_panels, "holes_in_view": holes}
+            "fouled": foul_frac > 0.05, "fouling_frac": round(foul_frac, 3),
+            "thinning_frac": round(thin_frac, 3), "holes_in_view": holes}
 
 
 cam_paths, plans, homes = [], [], []
@@ -814,9 +940,13 @@ with open(os.path.join(args.out, "ground_truth.json"), "w") as f:
                "holes": [{"panel": f"r{r}_c{c:02d}", "cell": ui_cell(hu / CAGE_R, hv),
                           "theta": hu / CAGE_R, "z": hv, "radius": hr}
                          for (r, c, hu, hv, hr) in HOLES],
-               "fouled_panels": sorted(f"r{r}_c{c:02d}" for (r, c) in fouled_panels),
-               "fouled_cells": sorted({ui_cell((c + 0.5) * DTH_PANEL, -(r + 0.5) * PANEL_H)
-                                       for (r, c) in fouled_panels})}, f, indent=2)
+               "thin_patches": [{"cell": ui_cell(pu / CAGE_R, pv), "theta": pu / CAGE_R,
+                                 "z": pv, "radius": pr} for (pu, pv, pr) in THIN],
+               "foul_patches": [{"cell": ui_cell(pu / CAGE_R, pv), "theta": pu / CAGE_R,
+                                 "z": pv, "radius": pr} for (pu, pv, pr) in FOUL],
+               "thin_cells": sorted({ui_cell(pu / CAGE_R, pv) for (pu, pv, _) in THIN}),
+               "fouled_cells": sorted({ui_cell(pu / CAGE_R, pv) for (pu, pv, _) in FOUL}),
+               "defect_area_fraction": round(DEFECT_FRAC, 4)}, f, indent=2)
 
 SQ = None
 if NAV and args.perception:
@@ -1101,7 +1231,9 @@ def grab(k):
         frame = np.clip(frame * (255.0 if frame.max() <= 1.0 else 1.0), 0, 255).astype(np.uint8)
     return frame[:, :, :3]
 print(f"[demo] footprint {FOOT_W:.2f} x {FOOT_H:.2f} m, {len(BANDS)} bands x {N_PER_BAND} shots per vehicle")
-print(f"[demo] ground truth: holes in {[f'r{r}_c{c:02d}' for r, c, *_ in HOLES]}, fouled {sorted(fouled_panels)}")
+print(f"[demo] ground truth: {len(HOLES)} holes (radii {[round(h[4], 2) for h in HOLES]} m), "
+      f"{len(THIN)} thinning patches, {len(FOUL)} fouling patches; "
+      f"{DEFECT_FRAC:.1%} of the net wall affected")
 counts = [0] * N_AUV
 finished_reported = False
 finish_t = None
