@@ -1,6 +1,7 @@
 /**
- * A simple, light drone model in the style of the BlueROV2 (black side frames, blue top covers,
- * white electronics tube, battery tube, six thrusters), built from a dozen primitives with the real
+ * A simple, light drone model in the style of the BlueROV2 (rounded black side frames with a window,
+ * blue top fairings, white electronics tube with camera dome, battery tube, six ducted thrusters), built
+ * from a dozen primitives with the real
  * vehicle's proportions (about 0.46 × 0.34 × 0.25 m). One merged geometry with vertex colours, so
  * every drone is a single cheap draw.
  */
@@ -29,31 +30,57 @@ function part(geometry: THREE.BufferGeometry, colour: string, at: [number, numbe
   return g;
 }
 
+/** Side frame: a rounded plate with a large window, in the y–z plane. */
+function framePlate(): THREE.BufferGeometry {
+  const rounded = (w: number, h: number, r: number): THREE.Shape => {
+    const sh = new THREE.Shape();
+    sh.moveTo(-w / 2 + r, -h / 2);
+    sh.lineTo(w / 2 - r, -h / 2);
+    sh.quadraticCurveTo(w / 2, -h / 2, w / 2, -h / 2 + r);
+    sh.lineTo(w / 2, h / 2 - r);
+    sh.quadraticCurveTo(w / 2, h / 2, w / 2 - r, h / 2);
+    sh.lineTo(-w / 2 + r, h / 2);
+    sh.quadraticCurveTo(-w / 2, h / 2, -w / 2, h / 2 - r);
+    sh.lineTo(-w / 2, -h / 2 + r);
+    sh.quadraticCurveTo(-w / 2, -h / 2, -w / 2 + r, -h / 2);
+    return sh;
+  };
+  const outer = rounded(0.46, 0.22, 0.05);
+  const window = rounded(0.3, 0.11, 0.03);
+  outer.holes.push(new THREE.Path(window.getPoints(4)));
+  const g = new THREE.ExtrudeGeometry(outer, { depth: 0.014, bevelEnabled: false, curveSegments: 4 });
+  g.translate(0, 0, -0.007);
+  g.rotateY(Math.PI / 2); // plate length from x onto z
+  return g;
+}
+
 function build(): THREE.BufferGeometry {
   const alongZ: [number, number, number] = [Math.PI / 2, 0, 0];
+  const pod = (): THREE.BufferGeometry => new THREE.CapsuleGeometry(0.05, 0.24, 4, 12).scale(1.15, 1, 0.55);
   const parts = [
-    // Side frames and bottom plate.
-    part(new THREE.BoxGeometry(0.02, 0.22, 0.46), FRAME, [0.16, 0, 0]),
-    part(new THREE.BoxGeometry(0.02, 0.22, 0.46), FRAME, [-0.16, 0, 0]),
-    part(new THREE.BoxGeometry(0.3, 0.014, 0.4), FRAME, [0, -0.115, 0]),
-    // Blue top covers.
-    part(new THREE.BoxGeometry(0.12, 0.035, 0.32), COVER, [0.085, 0.105, -0.02]),
-    part(new THREE.BoxGeometry(0.12, 0.035, 0.32), COVER, [-0.085, 0.105, -0.02]),
-    // Electronics tube (front, with a dark dome) and battery tube below.
-    part(new THREE.CylinderGeometry(0.055, 0.055, 0.3, 16), TUBE, [0, 0.03, 0.02], alongZ),
-    part(new THREE.SphereGeometry(0.055, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), FRAME, [0, 0.03, 0.17], alongZ),
-    part(new THREE.CylinderGeometry(0.042, 0.042, 0.24, 12), BATTERY, [0, -0.07, -0.03], alongZ),
+    // Side frames and a slim bottom rail.
+    part(framePlate(), FRAME, [0.165, 0, 0]),
+    part(framePlate(), FRAME, [-0.165, 0, 0]),
+    part(new THREE.CapsuleGeometry(0.012, 0.36, 2, 6), FRAME, [0, -0.11, 0], alongZ),
+    // Rounded blue top fairings.
+    part(pod(), COVER, [0.085, 0.1, -0.02], alongZ),
+    part(pod(), COVER, [-0.085, 0.1, -0.02], alongZ),
+    // Electronics tube with a dark camera dome at the front, battery tube below.
+    part(new THREE.CapsuleGeometry(0.055, 0.22, 4, 16), TUBE, [0, 0.025, 0.01], alongZ),
+    part(new THREE.SphereGeometry(0.05, 12, 8), FRAME, [0, 0.025, 0.16]),
+    part(new THREE.CapsuleGeometry(0.04, 0.18, 3, 12), BATTERY, [0, -0.07, -0.03], alongZ),
   ];
-  // Four vectored horizontal thrusters at the corners, two vertical ones on top.
+  // Ducted thrusters: four vectored at the corners, two vertical on top.
+  const duct = (): THREE.BufferGeometry => mergeGeometries([new THREE.TorusGeometry(0.04, 0.009, 6, 18), new THREE.CylinderGeometry(0.012, 0.012, 0.03, 8).rotateX(Math.PI / 2)])!;
   for (const [x, z] of [
-    [0.13, 0.18],
-    [-0.13, 0.18],
-    [0.13, -0.18],
-    [-0.13, -0.18],
+    [0.13, 0.19],
+    [-0.13, 0.19],
+    [0.13, -0.19],
+    [-0.13, -0.19],
   ]) {
-    parts.push(part(new THREE.CylinderGeometry(0.038, 0.038, 0.05, 12), THRUSTER, [x, -0.02, z], [Math.PI / 2, 0, (x > 0 ? 1 : -1) * Math.PI / 4]));
+    parts.push(part(duct(), THRUSTER, [x, -0.02, z], [0, (x > 0 ? 1 : -1) * (z > 0 ? 1 : -1) * Math.PI / 4, 0]));
   }
-  for (const x of [0.12, -0.12]) parts.push(part(new THREE.CylinderGeometry(0.038, 0.038, 0.05, 12), THRUSTER, [x, 0.09, 0]));
+  for (const x of [0.12, -0.12]) parts.push(part(duct(), THRUSTER, [x, 0.09, 0.0], [Math.PI / 2, 0, 0]));
   const merged = mergeGeometries(parts);
   parts.forEach((p) => p.dispose());
   if (!merged) throw new Error('Could not build the drone model');

@@ -1,7 +1,7 @@
 /**
  * Site version 4: the whole farm in 3D. Every pen's net hangs in the water painted with hole risk,
  * the feed barge floats at the edge, and the swarm drones circle the pens they work on. Click a pen
- * to open it. Renders on demand; drones and current streaks animate in live mode only.
+ * to open it. Renders on demand; drones animate in live mode only.
  */
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
@@ -36,6 +36,9 @@ const PEN_OFFSET = new THREE.Vector3(85, 9, 95);
 const PEN_TARGET = new THREE.Vector3(0, -15, 0);
 
 const R = PEN_RADIUS_M;
+/** Feed barge position (waterline) and the cradle positions along its swarm-dock pontoon. */
+const BARGE = new THREE.Vector3(-30, 0, -165);
+const DOCK_SLOTS = [-8, 0, 8];
 
 /** Pen centre in metres, centred on the farm. */
 function penPosition(world: World, i: number): THREE.Vector3 {
@@ -62,9 +65,8 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
   const handlers = useRef({ onOpenPen, onSelectDrone });
   handlers.current = { onOpenPen, onSelectDrone };
   const timeRef = useRef(0);
-  const dayRef = useRef(day);
-  dayRef.current = day;
   const compassRef = useRef<HTMLDivElement>(null);
+  const bargeLabelRef = useRef<HTMLSpanElement>(null);
   const [hoverPen, setHoverPen] = useState<number | null>(null);
 
   useEffect(() => {
@@ -89,8 +91,8 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
 
     // Surroundings: shore, headland, island and seabed, painted like a sea chart.
     const terrainCanvas = document.createElement('canvas');
-    terrainCanvas.width = 1536;
-    terrainCanvas.height = 1248;
+    terrainCanvas.width = 2048;
+    terrainCanvas.height = 1664;
 
     paintTerrain(terrainCanvas, env); // painted here, so the scene never shows an unpainted (black) terrain
     const terrainTexture = new THREE.CanvasTexture(terrainCanvas);
@@ -147,25 +149,40 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
       scene.add(frame);
     });
 
-    // Feed barge.
-    const barge = new THREE.Mesh(new THREE.BoxGeometry(40, 10, 22), new THREE.MeshLambertMaterial({ color: color.paper }));
-    barge.position.set(-420, 3, 230);
-    scene.add(barge);
-    const deckhouse = new THREE.Mesh(new THREE.BoxGeometry(18, 8, 14), new THREE.MeshLambertMaterial({ color: color.ink3 }));
-    deckhouse.position.set(-428, 11, 230);
-    scene.add(deckhouse);
+    // Feed barge with the swarm dock: a hull with deckhouse and feed silos, and a pontoon on the pen
+    // side where drones charge in cradles.
+    const bargeGroup = new THREE.Group();
+    const lambert = (c: string): THREE.MeshLambertMaterial => new THREE.MeshLambertMaterial({ color: c });
+    const hull = new THREE.Mesh(new THREE.BoxGeometry(40, 5, 22), lambert(env.collar));
+    hull.position.set(0, 0.5, 0);
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(40, 1.2, 22), lambert(color.paper));
+    deck.position.set(0, 3.6, 0);
+    const deckhouse = new THREE.Mesh(new THREE.BoxGeometry(12, 7, 14), lambert(color.paper));
+    deckhouse.position.set(-12, 7.7, 0);
+    bargeGroup.add(hull, deck, deckhouse);
+    for (const [x, z] of [
+      [2, -5],
+      [2, 5],
+      [11, -5],
+      [11, 5],
+    ]) {
+      const silo = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 3.4, 9, 16), lambert('#c9cfd1'));
+      silo.position.set(x, 8.7, z);
+      bargeGroup.add(silo);
+    }
+    const pontoon = new THREE.Mesh(new THREE.BoxGeometry(12, 1.4, 26), lambert('#b9bfc1'));
+    pontoon.position.set(26, 0.4, 0);
+    bargeGroup.add(pontoon);
+    DOCK_SLOTS.forEach((z) => {
+      const cradle = new THREE.Mesh(new THREE.BoxGeometry(9, 0.6, 6), lambert(env.collar));
+      cradle.position.set(26, 1.4, z);
+      bargeGroup.add(cradle);
+    });
+    bargeGroup.position.copy(BARGE);
+    scene.add(bargeGroup);
 
     const droneGroup = new THREE.Group();
     scene.add(droneGroup);
-
-    // Current: short streaks drifting over the water surface in the current's direction.
-    const streakCount = 240;
-    const seeds = Array.from({ length: streakCount }, (_, k) => [((k * 97) % 1000) / 1000, ((k * 389) % 1000) / 1000]);
-    const streaks = new THREE.LineSegments(
-      new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(streakCount * 6), 3)),
-      new THREE.LineBasicMaterial({ color: env.current, transparent: true, opacity: 0.45, depthWrite: false }),
-    );
-    scene.add(streaks);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.target.copy(OVERVIEW.target);
@@ -185,6 +202,11 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
         const s = penPosition(world, i).setY(6).project(camera);
         el.style.transform = `translate(${((s.x + 1) / 2) * w}px, ${((1 - s.y) / 2) * h}px)`;
       });
+      const barge = bargeLabelRef.current;
+      if (barge) {
+        const s = BARGE.clone().setY(16).project(camera);
+        barge.style.transform = `translate(${((s.x + 1) / 2) * w}px, ${((1 - s.y) / 2) * h}px)`;
+      }
     };
     const render = (): void => {
       renderer.render(scene, camera);
@@ -198,11 +220,15 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
 
     const animate = (t: number): void => {
       timeRef.current = t;
+      let docked = 0;
       dronesRef.current.forEach((d, k) => {
         const m = droneGroup.children[k];
         if (!m) return;
         if (d.penIndex === null) {
-          m.position.set(-400 + k * 6, 2, 250);
+          // Docked: resting in the next free cradle on the barge's pontoon, nose to the pens.
+          const slot = docked++;
+          m.position.set(BARGE.x + 26, BARGE.y + 4, BARGE.z + DOCK_SLOTS[slot % DOCK_SLOTS.length]);
+          m.lookAt(m.position.x + 1, m.position.y, m.position.z);
           return;
         }
         // Inside the net, sweeping either side of its area.
@@ -215,23 +241,6 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
         const a = (angle * Math.PI) / 180;
         m.lookAt(m.position.x + Math.cos(a), m.position.y, m.position.z + Math.sin(a));
       });
-      const today = dayRef.current;
-      const a = (world.env.currentDir[today] * Math.PI) / 180;
-      const along = new THREE.Vector3(Math.sin(a), 0, -Math.cos(a));
-      const across = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
-      const speed = world.env.currentSpeed[today];
-      const rate = 0.01 + speed / 3000;
-      const length = 18 + speed * 1.2; // longer streaks in stronger current
-      const pos = streaks.geometry.getAttribute('position') as THREE.BufferAttribute;
-      seeds.forEach(([u, v], k) => {
-        const s = ((((u + t * rate) % 1) + 1) % 1) * 1500 - 750;
-        const head = along.clone().multiplyScalar(s).add(across.clone().multiplyScalar(v * 1100 - 550));
-        const y = heightAt(head.x, head.z) > -2 ? -999 : 0.8; // only over water
-        const tail = head.clone().sub(along.clone().multiplyScalar(length));
-        pos.setXYZ(k * 2, head.x, y, head.z);
-        pos.setXYZ(k * 2 + 1, tail.x, y, tail.z);
-      });
-      pos.needsUpdate = true;
       render();
     };
 
@@ -424,6 +433,9 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
           );
         })}
       </div>
+      <span ref={bargeLabelRef} className="site-place">
+        Feed barge, swarm dock
+      </span>
     </div>
   );
 }

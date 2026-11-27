@@ -1122,6 +1122,23 @@ h3 {
 }
 
 
+/* Place names on the 3D site, such as the feed barge. */
+.site-place {
+  position: absolute;
+  left: 0;
+  top: 0;
+  translate: -50% -100%;
+  pointer-events: none;
+  font-size: 11px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  text-shadow: 0 0 3px #fff, 0 0 6px #fff;
+}
+
+.site3d.focused .site-place {
+  display: none;
+}
+
 /* Pen markers on the 3D site: a number chip, with a pin above pens that need attention. */
 .site-marker {
   position: absolute;

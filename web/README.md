@@ -31,8 +31,10 @@ All data is **synthetic** (a seeded simulation), and the top bar says "Demo data
   (risk × days since last seen). Teammates never take neighbouring areas, and open findings keep a drone
   on them. Click a drone for its view, task, reason, battery, depth, health and queue. Drone D21 is
   docked for repair, which is why Pen 8's cone goes stale. Logic: `src/data/swarm.ts`.
-- **Current.** In 3D, faint streamlines bend around the pen, and particles drift along them at the
-  day's current speed. On the site map, arrows show the current.
+- **Current.** In the pen view, faint streamlines bend around the pen, and particles drift along
+  them at the day's current speed.
+- **Feed barge, swarm dock.** Drones docked for repair or charging rest in cradles on the barge's
+  pontoon, next to the pens.
 - **Water inside the pen.** On the oxygen and temperature layers, a horizontal slice through the pen
   at a depth you choose shows how values change across the pen, such as oxygen dropping where water
   leaves the pen.
