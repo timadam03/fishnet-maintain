@@ -23,6 +23,7 @@ import {
   type Finding,
 } from '../data/model';
 import type { Drone } from '../data/swarm';
+import { NET_OPACITY, environment } from '../lib/environment';
 import { paintNetTexture } from '../lib/heat';
 import { buildNetGeometry, netPoint, radiusAt } from '../lib/netGeometry';
 import type { LayerDef, LayerGrid } from '../lib/layers';
@@ -216,9 +217,27 @@ export default function Pen3D({
     texture.wrapS = THREE.RepeatWrapping;
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-    const net = new THREE.Mesh(buildNetGeometry(), new THREE.MeshLambertMaterial({ map: texture, side: THREE.DoubleSide }));
+    // See-through net (about 0.8), so drones and the far side stay visible from outside.
+    const net = new THREE.Mesh(
+      buildNetGeometry(),
+      new THREE.MeshLambertMaterial({ map: texture, side: THREE.DoubleSide, transparent: true, opacity: NET_OPACITY, depthWrite: false }),
+    );
     scene.add(net);
     buildRigging(scene);
+
+    // Fjord surroundings: a sandy seabed fading into the haze, and a light water surface.
+    scene.fog = new THREE.Fog(environment.haze, 160, 420);
+    const seabed = new THREE.Mesh(new THREE.CircleGeometry(260, 64), new THREE.MeshLambertMaterial({ color: environment.landLow }));
+    seabed.rotation.x = -Math.PI / 2;
+    seabed.position.y = -46;
+    scene.add(seabed);
+    const surface = new THREE.Mesh(
+      new THREE.RingGeometry(R + 2.8, 260, 64),
+      new THREE.MeshBasicMaterial({ color: environment.shallow, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    surface.rotation.x = -Math.PI / 2;
+    surface.position.y = 0.1;
+    scene.add(surface);
 
     const outline = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: color.ink }));
     outline.visible = false;
@@ -490,9 +509,7 @@ export default function Pen3D({
     if (!c) return;
     c.sliceMesh.visible = slice !== null;
     // See-through net while a slice is shown, so the slice inside is visible.
-    c.net.material.transparent = slice !== null;
-    c.net.material.opacity = slice ? 0.35 : 1;
-    c.net.material.depthWrite = slice === null;
+    c.net.material.opacity = slice ? 0.35 : NET_OPACITY;
     c.net.material.needsUpdate = true;
     if (slice) {
       slice.paint(c.sliceCanvas);

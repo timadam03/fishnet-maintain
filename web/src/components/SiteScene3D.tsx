@@ -11,7 +11,7 @@ import type { Drone } from '../data/swarm';
 import { paintNetTexture } from '../lib/heat';
 import { computeLayerGrid, layerById } from '../lib/layers';
 import { buildNetGeometry, netPoint } from '../lib/netGeometry';
-import type { Environment } from '../lib/environment';
+import { NET_OPACITY, type Environment } from '../lib/environment';
 import { TERRAIN, heightAt, paintTerrain } from '../lib/terrain';
 import { riskColor } from '../lib/layers';
 import { color } from '../lib/tokens';
@@ -152,7 +152,8 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
       texture.wrapS = THREE.RepeatWrapping;
       texture.colorSpace = THREE.SRGBColorSpace;
       textures.push({ canvas, texture });
-      const net = new THREE.Mesh(netGeometry, new THREE.MeshLambertMaterial({ map: texture, side: THREE.DoubleSide }));
+      // See-through nets, so the drones and the inside stay visible from outside.
+      const net = new THREE.Mesh(netGeometry, new THREE.MeshLambertMaterial({ map: texture, side: THREE.DoubleSide, transparent: true, opacity: NET_OPACITY, depthWrite: false }));
       net.position.copy(pos);
       net.userData.penIndex = i;
       scene.add(net);
