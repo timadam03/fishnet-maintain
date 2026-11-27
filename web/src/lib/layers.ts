@@ -6,7 +6,7 @@
 import { CELLS, STALE_AFTER_DAYS, type LayerId, type PenSim, type World } from '../data/model';
 import { coverageAge, riskScore, windowSum } from '../data/risk';
 import { waterAt } from '../data/water';
-import { blueRamp, color, greyRamp, redRamp, riskStops, tealRamp } from './tokens';
+import { waterRamp, color, ageRamp, damageRamp, riskStops, bioRamp } from './tokens';
 
 export interface LayerDef {
   id: LayerId;
@@ -59,7 +59,7 @@ const scale = (stops: readonly string[], min: number, max: number, invert = fals
   const t = (v - min) / (max - min);
   return ramp([...stops], invert ? 1 - t : t);
 };
-const blueScale = (min: number, max: number) => scale(blueRamp, min, max);
+const waterScale = (min: number, max: number) => scale(waterRamp, min, max);
 
 const pct = (v: number): string => `${Math.round(v * 100)}%`;
 
@@ -90,7 +90,7 @@ export const LAYERS: LayerDef[] = [
     max: 1,
     hatchStale: true,
     format: (v) => v.toFixed(2),
-    color: scale(redRamp, 0, 0.8),
+    color: scale(damageRamp, 0, 0.8),
     legend: [
       { value: 0.05, label: 'New' },
       { value: 0.4, label: 'Worn' },
@@ -106,7 +106,7 @@ export const LAYERS: LayerDef[] = [
     max: 1,
     hatchStale: false,
     format: pct,
-    color: scale(tealRamp, 0, 0.7),
+    color: scale(bioRamp, 0, 0.7),
     legend: [
       { value: 0, label: '0%' },
       { value: 0.35, label: '35%' },
@@ -123,7 +123,7 @@ export const LAYERS: LayerDef[] = [
     hatchStale: false,
     format: (v) => `${Math.round(v)}%`,
     // Low oxygen is the notable end, so it gets the brightest colour.
-    color: scale(blueRamp, 60, 100, true),
+    color: scale(waterRamp, 60, 100, true),
     legend: [
       { value: 60, label: '≤60%' },
       { value: 80, label: '80%' },
@@ -140,7 +140,7 @@ export const LAYERS: LayerDef[] = [
     hatchStale: false,
     fitToData: { minSpan: 1 },
     format: (v) => `${v.toFixed(1)}°C`,
-    color: blueScale(6, 15),
+    color: waterScale(6, 15),
     legend: [
       { value: 6, label: '6°C' },
       { value: 10.5, label: '10.5°C' },
@@ -156,7 +156,7 @@ export const LAYERS: LayerDef[] = [
     max: 60,
     hatchStale: false,
     format: (v) => `${Math.round(v)} h`,
-    color: scale(redRamp, 0, 60),
+    color: scale(damageRamp, 0, 60),
     legend: [
       { value: 0, label: '0 h' },
       { value: 30, label: '30 h' },
@@ -172,7 +172,7 @@ export const LAYERS: LayerDef[] = [
     max: 14,
     hatchStale: false,
     format: (v) => `${Math.round(v)} passes`,
-    color: scale(redRamp, 0, 14),
+    color: scale(damageRamp, 0, 14),
     legend: [
       { value: 0, label: '0' },
       { value: 7, label: '7' },
@@ -188,7 +188,7 @@ export const LAYERS: LayerDef[] = [
     max: STALE_AFTER_DAYS,
     hatchStale: true,
     format: (v) => `${Math.round(v)} d ago`,
-    color: scale(greyRamp, 0, STALE_AFTER_DAYS),
+    color: scale(ageRamp, 0, STALE_AFTER_DAYS),
     legend: [
       { value: 0, label: 'Today' },
       { value: 7, label: '7 d' },
@@ -218,7 +218,7 @@ export function fitLayer(layer: LayerDef, values: Float32Array): LayerDef {
     ...layer,
     min,
     max,
-    color: blueScale(min, max),
+    color: waterScale(min, max),
     legend: [min, (min + max) / 2, max].map((v) => ({ value: v, label: layer.format(v) })),
     source: `${layer.source}. Scale fitted to this day`,
   };

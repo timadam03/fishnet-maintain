@@ -10,7 +10,7 @@ import { TimeBar } from './components/TimeBar';
 import { layerById } from './lib/layers';
 import { fromHash, initialState, openFindings, reducer, statusAt, toHash } from './lib/state';
 import { riskShareSeries, summarisePen, topRiskAreas } from './lib/summary';
-import { color } from './lib/tokens';
+import { THEMES, color, type ThemeId } from './lib/tokens';
 
 const world: World = generateWorld();
 const stormSummaries = world.pens.map((_, i) => summarisePen(world, i, STORM_FORECAST_DAY));
@@ -21,7 +21,7 @@ const siteShare = riskShareSeries(
   DAYS,
 );
 
-export default function App() {
+export default function App({ theme, onTheme }: { theme: ThemeId; onTheme: (id: ThemeId) => void }) {
   const [state, dispatch] = useReducer(reducer, initialState, (s) => ({ ...s, ...fromHash(window.location.hash, world.pens.length) }));
   const { penIndex, cell, findingId, day, layer, playing, reviews } = state;
 
@@ -139,6 +139,13 @@ export default function App() {
           ))}
         </nav>
         <div className="spacer" />
+        <div className="segmented theme-switch" role="group" aria-label="Colour theme">
+          {THEMES.map((t) => (
+            <button key={t.id} data-text={t.short} aria-pressed={t.id === theme} title={t.name} onClick={() => onTheme(t.id)}>
+              {t.short}
+            </button>
+          ))}
+        </div>
         <span className="status-text optional" title="Every value in this demo comes from a simulation">
           Demo data
         </span>

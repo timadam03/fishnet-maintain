@@ -88,8 +88,11 @@ export function sample(field: ColorField, row: number, col: number, out: Uint8Cl
 }
 
 let hatch: CanvasPattern | null = null;
+let hatchColor = '';
 export function hatchPattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
-  if (hatch) return hatch;
+  // Rebuilt when the theme changes the hatch colour.
+  if (hatch && hatchColor === color.hatch) return hatch;
+  hatchColor = color.hatch;
   const c = document.createElement('canvas');
   c.width = 8;
   c.height = 8;

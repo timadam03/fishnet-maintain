@@ -959,3 +959,8 @@ h3 {
 .scene-label.drone-label.selected {
   border-color: var(--signal);
 }
+
+.theme-switch button {
+  padding: 2px 8px;
+  font-size: 12px;
+}

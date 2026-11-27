@@ -9,11 +9,13 @@ interface Props {
   day: number;
 }
 
-const SERIES = [
-  { key: 'critical', label: 'Critical', fill: riskColor(0.8) },
-  { key: 'high', label: 'High', fill: riskColor(0.58) },
-  { key: 'elevated', label: 'Elevated', fill: riskColor(0.36) },
-] as const;
+/** Read at render time so the colours follow the active theme. */
+const series = () =>
+  [
+    { key: 'critical', label: 'Critical', fill: riskColor(0.8) },
+    { key: 'high', label: 'High', fill: riskColor(0.58) },
+    { key: 'elevated', label: 'Elevated', fill: riskColor(0.36) },
+  ] as const;
 
 const pct = (v: number): string => `${(v * 100).toFixed(v < 0.01 && v > 0 ? 1 : 0)}%`;
 
@@ -30,6 +32,7 @@ export function RiskShareChart({ share, day }: Props) {
 
   // Stack from the bottom: critical, then high, then elevated.
   let base = new Float32Array(n);
+  const SERIES = series();
   const areas = [...SERIES].map((s) => {
     const values = share[s.key];
     const upper = base.map((b, i) => b + values[i]);
