@@ -11,6 +11,7 @@ import type { Drone } from '../data/swarm';
 import { paintNetTexture } from '../lib/heat';
 import { computeLayerGrid, layerById } from '../lib/layers';
 import { buildNetGeometry, netPoint } from '../lib/netGeometry';
+import type { Environment } from '../lib/environment';
 import { TERRAIN, heightAt, paintTerrain } from '../lib/terrain';
 import { riskColor } from '../lib/layers';
 import { color } from '../lib/tokens';
@@ -25,6 +26,8 @@ interface Props {
   focusPen: number | null;
   /** Worst hole risk per pen today, for the halos on the water. */
   penRisk: number[];
+  /** Colours for water, land, haze and current. */
+  env: Environment;
   onOpenPen: (penIndex: number) => void;
   onSelectDrone: (id: string) => void;
 }
@@ -48,12 +51,14 @@ interface SceneCtx {
   collars: THREE.Mesh<THREE.TorusGeometry, THREE.MeshLambertMaterial>[];
   droneGroup: THREE.Group;
   halos: THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>[];
+  /** Repaints water, land, haze and current in an environment palette. */
+  setEnvironment: (env: Environment) => void;
   animate: (t: number) => void;
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
 }
 
-export default function SiteScene3D({ world, day, live, open, drones, focusPen, penRisk, onOpenPen, onSelectDrone }: Props) {
+export default function SiteScene3D({ world, day, live, open, drones, focusPen, penRisk, env, onOpenPen, onSelectDrone }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const labelsRef = useRef<HTMLDivElement>(null);
   const ctx = useRef<SceneCtx | null>(null);
@@ -77,6 +82,7 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
 
     const scene = new THREE.Scene();
     scene.fog = new THREE.Fog(color.page, 700, 1700);
+    scene.background = null;
     scene.add(new THREE.AmbientLight(0xffffff, 1.8));
     const sun = new THREE.DirectionalLight(0xffffff, 1);
     sun.position.set(-120, 260, 160);
@@ -89,7 +95,7 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
     const terrainCanvas = document.createElement('canvas');
     terrainCanvas.width = 1200;
     terrainCanvas.height = 900;
-    paintTerrain(terrainCanvas);
+
     const terrainTexture = new THREE.CanvasTexture(terrainCanvas);
     terrainTexture.colorSpace = THREE.SRGBColorSpace;
     terrainTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
@@ -103,7 +109,7 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
     // A faint water surface over the underwater terrain; land rises through it.
     const surface = new THREE.Mesh(
       new THREE.PlaneGeometry(TERRAIN.width, TERRAIN.depth),
-      new THREE.MeshBasicMaterial({ color: color.sea, transparent: true, opacity: 0.28, depthWrite: false }),
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.25, depthWrite: false }),
     );
     surface.rotation.x = -Math.PI / 2;
     scene.add(surface);
@@ -181,7 +187,7 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
     const seeds = Array.from({ length: streakCount }, (_, k) => [((k * 97) % 1000) / 1000, ((k * 389) % 1000) / 1000]);
     const streaks = new THREE.LineSegments(
       new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(streakCount * 6), 3)),
-      new THREE.LineBasicMaterial({ color: color.ink, transparent: true, opacity: 0.45, depthWrite: false }),
+      new THREE.LineBasicMaterial({ transparent: true, opacity: 0.45, depthWrite: false }),
     );
     scene.add(streaks);
 
@@ -298,7 +304,18 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
     el.addEventListener('pointerup', onUp);
     el.addEventListener('pointermove', onMove);
 
-    ctx.current = { render, textures, collars, droneGroup, halos, animate, camera, controls };
+    const setEnvironment = (e: Environment): void => {
+      paintTerrain(terrainCanvas, e);
+      terrainTexture.needsUpdate = true;
+      (scene.fog as THREE.Fog).color.set(e.haze);
+      surface.material.color.set(e.shallow);
+      surface.material.opacity = e.surfaceOpacity;
+      streaks.material.color.set(e.current);
+      wrap.style.background = e.haze;
+      render();
+    };
+
+    ctx.current = { render, textures, collars, droneGroup, halos, animate, camera, controls, setEnvironment };
     resize();
 
     return () => {
@@ -342,6 +359,10 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
     });
     c.animate(timeRef.current);
   }, [world, day, open]);
+
+  useEffect(() => {
+    ctx.current?.setEnvironment(env);
+  }, [env]);
 
   // Halos tinted by each pen's worst risk; calm pens get none.
   useEffect(() => {

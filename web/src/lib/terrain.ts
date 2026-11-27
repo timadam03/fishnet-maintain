@@ -4,6 +4,7 @@
  * terrain mesh and its chart-like texture (depth bands, contour lines, coastline, soundings).
  * Illustrative only; not real bathymetry.
  */
+import type { Environment } from './environment';
 import { color } from './tokens';
 
 export const TERRAIN = { width: 2400, depth: 1800 };
@@ -35,18 +36,18 @@ function parse(c: string): [number, number, number] {
 }
 
 /** Paints the terrain like a sea chart: tinted depth and height bands with thin contours and soundings. */
-export function paintTerrain(canvas: HTMLCanvasElement): void {
+export function paintTerrain(canvas: HTMLCanvasElement, env: Environment): void {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   const w = canvas.width;
   const h = canvas.height;
   const sx = TERRAIN.width / w;
   const sz = TERRAIN.depth / h;
-  const sea = parse(color.sea);
-  const deep = parse(color.seaDeep);
-  const land = parse(color.land);
-  const high = parse(color.paper);
-  const ink = parse(color.coast);
+  const sea = parse(env.shallow);
+  const deep = parse(env.deep);
+  const land = parse(env.landLow);
+  const high = parse(env.landHigh);
+  const ink = parse(env.contour);
   const img = ctx.createImageData(w, h);
   for (let py = 0; py < h; py++) {
     for (let px = 0; px < w; px++) {
@@ -61,7 +62,7 @@ export function paintTerrain(canvas: HTMLCanvasElement): void {
       let base: number[];
       if (v >= 0) {
         const t = Math.min(1, Math.floor(v / step) / 6);
-        base = land.map((c, k) => c + (high[k] - c) * t * 0.6);
+        base = land.map((c, k) => c + (high[k] - c) * t);
       } else {
         const t = Math.min(1, Math.floor(-v / step) / 7);
         base = sea.map((c, k) => c + (deep[k] - c) * t);

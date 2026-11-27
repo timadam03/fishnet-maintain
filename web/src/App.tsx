@@ -1,4 +1,5 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { ENVIRONMENTS, environmentById, type Environment } from './lib/environment';
 import { DAYS, STORM_FORECAST_DAY, TODAY, cellLabel, type World } from './data/model';
 import { generateWorld } from './data/simulate';
 import { CellPanel, DronePanel, FindingPanel, PenPanel, SitePanel } from './components/SidePanel';
@@ -14,6 +15,15 @@ import { color } from './lib/tokens';
 
 const SiteScene3D = lazy(() => import('./components/SiteScene3D'));
 
+const ENV_KEY = 'shoal-environment';
+function loadEnvironment(): Environment {
+  try {
+    return environmentById(window.localStorage.getItem(ENV_KEY));
+  } catch {
+    return environmentById(null);
+  }
+}
+
 const world: World = generateWorld();
 const stormSummaries = world.pens.map((_, i) => summarisePen(world, i, STORM_FORECAST_DAY));
 const stormPeak = topRiskAreas(stormSummaries, 20, 20).filter((a) => a.score >= 0.5);
@@ -26,6 +36,15 @@ const siteShare = riskShareSeries(
 export default function App() {
   const [state, dispatch] = useReducer(reducer, initialState, (s) => ({ ...s, ...fromHash(window.location.hash, world.pens.length) }));
   const { penIndex, cell, findingId, day, layer, playing, reviews } = state;
+  const [env, setEnv] = useState<Environment>(loadEnvironment);
+  const chooseEnv = (e: Environment): void => {
+    setEnv(e);
+    try {
+      window.localStorage.setItem(ENV_KEY, e.id);
+    } catch {
+      // Not remembering the choice only means the default next time.
+    }
+  };
   const summaries = useMemo(() => world.pens.map((_, i) => summarisePen(world, i, day)), [day]);
   const open = useMemo(() => openFindings(world, day, reviews), [day, reviews]);
   const pen = penIndex === null ? null : world.pens[penIndex];
@@ -116,9 +135,9 @@ export default function App() {
 
   return (
     <div className="app">
-      <main className="stage">
+      <main className="stage" style={{ background: env.haze }}>
         <Suspense fallback={<p className="stage-hint">Loading 3D site…</p>}>
-          <SiteScene3D world={world} day={day} live={day === TODAY} open={open} drones={drones} focusPen={penIndex} penRisk={penRisk} onOpenPen={openPen} onSelectDrone={selectDrone} />
+          <SiteScene3D world={world} day={day} live={day === TODAY} open={open} drones={drones} focusPen={penIndex} penRisk={penRisk} env={env} onOpenPen={openPen} onSelectDrone={selectDrone} />
         </Suspense>
         {pen && penIndex !== null && (
           <PenView
@@ -138,9 +157,21 @@ export default function App() {
           />
         )}
         {!pen && (
-          <div className="stage-controls bottom-left">
-            <Legend layer={layerById('risk')} />
-          </div>
+          <>
+            <div className="stage-controls bottom-left">
+              <Legend layer={layerById('risk')} />
+            </div>
+            <div className="stage-controls bottom-right">
+              <div className="segmented env-switch" role="group" aria-label="Environment colours (for comparison)">
+                {ENVIRONMENTS.map((e) => (
+                  <button key={e.id} data-text={e.name} aria-pressed={e.id === env.id} onClick={() => chooseEnv(e)}>
+                    <span className="env-dot" style={{ background: `linear-gradient(135deg, ${e.shallow}, ${e.deep})` }} aria-hidden="true" />
+                    {e.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
         )}
         {drone && drone.penIndex !== null && <RobotView world={world} day={day} drone={drone} onClose={() => dispatch({ type: 'drone', id: null })} />}
         <div className="timebar">
