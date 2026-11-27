@@ -41,6 +41,7 @@ import argparse
 import json
 import math
 import os
+import time
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--bands", type=int, default=3)
@@ -120,6 +121,14 @@ if args.oceansim:
 CAGE_R = 8.0              # net pen radius [m]
 CAGE_DEPTH = 8.0          # net wall depth [m] (from z=0 down to z=-8)
 N_COLS, N_ROWS = 12, 3    # panels around x panels down  -> labels panel_r{row}_c{col}
+# Logical inspection grid, shared with the operator UI (web/src/data/model.ts).
+# Deliberately separate from the visual panel grid above: the mesh stays coarse to keep the
+# render cheap, while captures are addressed on the UI's cell grid so one capture maps to
+# exactly one cell the decision layer reasons about. The Isaac pen is a scale model -- only
+# (row, col) cross the seam, never metres.
+UI_SECTORS = 24           # must equal ANGLE_SECTORS in web/src/data/model.ts
+UI_WALL_ROWS = 8          # must equal WALL_ROWS in web/src/data/model.ts
+RUN_ID = time.strftime("%Y%m%dT%H%M%S")   # stamped into every capture record
 MESH_SPACING = 0.25 if args.lite else (0.1 if args.hq else 0.15)   # visual net mesh size [m]
 TWINE_W, ROPE_W = 0.018, 0.05
 N_HOLES, N_FOULED = 3, 4  # injected defects (ground truth goes into the metadata)
@@ -595,13 +604,26 @@ def plan(k):
     return wps
 
 
+def ui_cell(theta, z):
+    """Index of this view on the operator UI's cell grid: row * UI_SECTORS + col.
+
+    Row 0 is the surface band and col 0 starts at 0 deg, matching cellRow/cellCol in
+    web/src/data/model.ts. Depth is taken as a fraction of CAGE_DEPTH, so a demo-sized pen
+    addresses the same cells as a full-size one.
+    """
+    col = int((theta % (2 * math.pi)) // (2 * math.pi / UI_SECTORS))
+    row = int(min(UI_WALL_ROWS - 1, max(0.0, -z) / CAGE_DEPTH * UI_WALL_ROWS))
+    return row * UI_SECTORS + col
+
+
 def label(theta, z):
     col = int((theta % (2 * math.pi)) // DTH_PANEL)
     row = int(min(N_ROWS - 1, max(0.0, -z) // PANEL_H))
     holes = [{"panel": f"r{r}_c{c:02d}", "theta": hu / CAGE_R, "z": hv, "radius": hr}
              for (r, c, hu, hv, hr) in HOLES
              if abs(wrap(hu / CAGE_R - theta)) * CAGE_R < FOOT_W / 2 and abs(hv - z) < FOOT_H / 2]
-    return {"panel": f"r{row}_c{col:02d}", "fouled": (row, col) in fouled_panels, "holes_in_view": holes}
+    return {"panel": f"r{row}_c{col:02d}", "cell": ui_cell(theta, z),
+            "fouled": (row, col) in fouled_panels, "holes_in_view": holes}
 
 
 cam_paths, plans, homes = [], [], []
@@ -786,9 +808,15 @@ for k in range(N_AUV):
     os.makedirs(os.path.join(args.out, f"auv_{k}"), exist_ok=True)
 meta_file = open(os.path.join(args.out, "captures.jsonl"), "w")
 with open(os.path.join(args.out, "ground_truth.json"), "w") as f:
-    json.dump({"holes": [{"panel": f"r{r}_c{c:02d}", "theta": hu / CAGE_R, "z": hv, "radius": hr}
+    json.dump({"run_id": RUN_ID,
+               "grid": {"ui_sectors": UI_SECTORS, "ui_wall_rows": UI_WALL_ROWS,
+                        "cage_radius_m": CAGE_R, "cage_depth_m": CAGE_DEPTH},
+               "holes": [{"panel": f"r{r}_c{c:02d}", "cell": ui_cell(hu / CAGE_R, hv),
+                          "theta": hu / CAGE_R, "z": hv, "radius": hr}
                          for (r, c, hu, hv, hr) in HOLES],
-               "fouled_panels": sorted(f"r{r}_c{c:02d}" for (r, c) in fouled_panels)}, f, indent=2)
+               "fouled_panels": sorted(f"r{r}_c{c:02d}" for (r, c) in fouled_panels),
+               "fouled_cells": sorted({ui_cell((c + 0.5) * DTH_PANEL, -(r + 0.5) * PANEL_H)
+                                       for (r, c) in fouled_panels})}, f, indent=2)
 
 SQ = None
 if NAV and args.perception:
@@ -1154,7 +1182,7 @@ while simulation_app.is_running():
         fname = f"auv_{k}/img_{counts[k]:04d}.png"
         Image.fromarray(data).save(os.path.join(args.out, fname))
         lab = label(wp["theta"], wp["z"])
-        rec = {"image": fname, "auv": k, "sim_time": round(t, 3), "band": wp["band"],
+        rec = {"image": fname, "run_id": RUN_ID, "auv": k, "sim_time": round(t, 3), "band": wp["band"],
                "theta_deg": round(math.degrees(wp["theta"]) % 360, 2), "depth": wp["z"],
                "position": np.round(np.asarray(pos[k], dtype=float), 3).tolist(),
                "timeout": s["timeout"], **lab}
