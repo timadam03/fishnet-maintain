@@ -45,6 +45,9 @@ import time
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--bands", type=int, default=3)
+parser.add_argument("--standoff", type=float, default=4.0,
+                    help="distance from the net when taking pictures [m]. The survey pass runs far "
+                         "(default 4); a decision-layer re-inspection runs close (e.g. 1.5)")
 parser.add_argument("--full-coverage", action="store_true")
 parser.add_argument("--view", default="orbit", choices=["orbit", "section", "auv0", "auv1", "auv2"])
 parser.add_argument("--hq", action="store_true",
@@ -141,7 +144,7 @@ HOLE_RADII = (0.10, 0.16, 0.28, 0.45)   # m, one per hole: mostly small, one obv
 THIN_RADIUS = (0.75, 1.25)              # m, patch radius range
 FOUL_RADIUS = (0.60, 1.10)              # m, patch radius range
 DEFECT_BUDGET = 0.10                    # refuse to build a net more defective than this
-SEABED_Z = -20.0
+SEABED_Z = -30.0          # deep enough to sit beyond the fog, so it never shows behind the net
 
 N_AUV = 3
 MASS, G = 11.0, 9.81      # BlueROV2-ish
@@ -152,7 +155,7 @@ CURRENT = np.array([0.12, 0.05, 0.0])   # water current [m/s]
 KP, KD, F_MAX = 20.0, 15.0, 30.0
 KP_YAW, KD_YAW, TZ_MAX = 2.0, 0.5, 3.0
 
-STANDOFF = 2.0            # distance from net when taking pictures [m]
+STANDOFF = args.standoff  # distance from net [m]; --standoff 1.5 for a close re-inspection pass
 OVERLAP = 0.30
 RES = (640, 360) if args.lite else (1280, 720)   # --hq keeps 1280x720; use --record-res for the cinematic views
 FOCAL, H_APERTURE = 18.0, 20.955
@@ -161,7 +164,11 @@ SETTLE_POS, SETTLE_YAW, SETTLE_SPEED = 0.15, math.radians(4.0), 0.08
 SETTLE_FRAMES, WP_TIMEOUT = 30, 20.0
 
 LAMP_INTENSITY = 1.5e6    # vehicle spotlights -- tweak if too bright/dark
-FOG_END = 35.0            # visibility distance [m]
+# Real net-inspection footage is a lit net against flat, dark water: everything past the net is
+# gone. At 35 m the surface and the seabed stayed lit and washed the frame out, so this is the
+# number that sets the look. Keep it a few metres past STANDOFF, never far enough to reach the
+# surface or the seabed.
+FOG_END = 12.0            # visibility distance [m]
 
 rng = np.random.default_rng(7)
 
@@ -286,12 +293,12 @@ M = {
     "net": make_mat("net", (0.50, 0.46, 0.37), rough=0.75),
     "net_thin": make_mat("net_thin", (0.61, 0.58, 0.51), rough=0.7),
     "net_fouled": make_mat("net_fouled", (0.29, 0.23, 0.10), rough=0.95),
-    "rope": make_mat("rope", (0.16, 0.12, 0.07), rough=0.8),
+    "rope": make_mat("rope", (0.58, 0.55, 0.49), rough=0.8),
     "hdpe": make_mat("hdpe", (0.03, 0.03, 0.03), rough=0.35),
     "steel": make_mat("steel", (0.55, 0.57, 0.6), rough=0.3, metal=0.9),
     "sand": make_mat("sand", (0.42, 0.38, 0.28), rough=0.95),
     "rock": make_mat("rock", (0.22, 0.21, 0.19), rough=0.9),
-    "water": make_mat("water_surface", (0.10, 0.45, 0.55), rough=0.05, opacity=0.35),
+    "water": make_mat("water_surface", (0.05, 0.20, 0.26), rough=0.05, opacity=0.6),
     "fish": make_mat("fish", (0.62, 0.66, 0.72), rough=0.3, metal=0.6),
     "auv": make_mat("auv_hull", (1.0, 0.55, 0.05), rough=0.4),
     "auv_top": make_mat("auv_top", (0.92, 0.92, 0.9), rough=0.5),
@@ -325,8 +332,8 @@ if args.no_surface:
     UsdGeom.Imageable(water.GetPrim()).MakeInvisible()
 
 dome = UsdLux.DomeLight.Define(stage, "/World/Env/Dome")
-dome.CreateIntensityAttr(800.0 * args.brightness)
-dome.CreateColorAttr(Gf.Vec3f(0.35, 0.65, 0.8))
+dome.CreateIntensityAttr(450.0 * args.brightness)
+dome.CreateColorAttr(Gf.Vec3f(0.16, 0.40, 0.50))
 sun = UsdLux.DistantLight.Define(stage, "/World/Env/Sun")
 sun.CreateIntensityAttr(3000.0 * args.brightness)
 sun.CreateAngleAttr(2.0)
@@ -337,9 +344,9 @@ set_xform(sun, r=(15, 10, 0))
 settings = carb.settings.get_settings()
 for key, val in {
     "/rtx/fog/enabled": not args.no_fog,
-    "/rtx/fog/fogColor": [0.02, 0.17, 0.21],
+    "/rtx/fog/fogColor": [0.015, 0.105, 0.135],
     "/rtx/fog/fogColorIntensity": 1.0,
-    "/rtx/fog/fogStartDist": 1.5,
+    "/rtx/fog/fogStartDist": max(1.5, STANDOFF * 1.3),
     "/rtx/fog/fogEndDist": FOG_END,
     "/rtx/fog/fogDistanceDensity": 1.0,
 }.items():
