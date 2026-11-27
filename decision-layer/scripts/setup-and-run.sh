@@ -29,20 +29,31 @@ key=$(current GOOGLE_GENERATIVE_AI_API_KEY)
 if [ -n "$key" ]; then
   echo "Checking the Gemini key and listing models..."
   models=$(curl -sS -H "x-goog-api-key: $key" "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200") || { echo "Could not reach the Gemini API."; exit 1; }
-  pick=$(MODELS="$models" node -e '
+  # One model name per line: Flash text models, best default first.
+  options=$(MODELS="$models" node -e '
     const r = JSON.parse(process.env.MODELS);
     if (r.error) { console.error("Gemini API error: " + r.error.message); process.exit(1); }
     const names = (r.models || [])
       .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
       .map((m) => m.name.replace(/^models\//, ""))
-      .filter((n) => n.includes("flash") && !/(image|tts|audio|live|thinking|exp|lite)/.test(n));
+      .filter((n) => n.includes("flash") && !/(image|tts|audio|live|thinking|exp)/.test(n));
     if (names.length === 0) { console.error("No Flash text model available on this key."); process.exit(1); }
-    names.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
-    console.log(names[0]);')
-  model=$(current GEMINI_MODEL); model=${model:-$pick}
-  read -rp "Gemini model [$model]: " chosen
-  set_var GEMINI_MODEL "${chosen:-$model}"
-  echo "Key works. Agents will use $(current GEMINI_MODEL)."
+    // Stable before preview, full before lite (lite is weaker at tool calling), then newest first.
+    const rank = (n) => (/preview/.test(n) ? 2 : 0) + (/lite/.test(n) ? 1 : 0);
+    names.sort((a, b) => rank(a) - rank(b) || b.localeCompare(a, undefined, { numeric: true }));
+    console.log(names.join("\n"));')
+  saved=$(current GEMINI_MODEL)
+  default=$(echo "$options" | grep -qxF "$saved" && echo "$saved" || echo "$options" | head -1)
+  echo "Models on this key (type a number, or press Enter for the default):"
+  echo "$options" | nl -w2 -s') '
+  while true; do
+    read -rp "Choice [$default]: " choice
+    if [ -z "$choice" ]; then model=$default; break; fi
+    if [[ "$choice" =~ ^[0-9]+$ ]]; then model=$(echo "$options" | sed -n "${choice}p"); [ -n "$model" ] && break; fi
+    echo "Please type one of the numbers above, or press Enter."
+  done
+  set_var GEMINI_MODEL "$model"
+  echo "Key works. Agents will use $model."
 else
   echo "No Gemini key: the investigator will say it isn't configured, and the curator uses its rule-based version."
 fi
