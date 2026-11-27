@@ -151,7 +151,8 @@ function dronePosition(d: Drone, t: number, k: number): THREE.Vector3 {
   const base = cellCol(d.cell) * SECTOR_DEG + SECTOR_DEG / 2;
   const sweep = d.status === 'sampling' ? 40 * Math.sin(t / 9 + k) : 9 * Math.sin(t / 3 + k);
   const depth = d.depth + (d.status === 'sampling' ? 3 * Math.sin(t / 5 + k) : 0);
-  return netPoint(Math.min(depth, WALL_DEPTH_M), base + sweep, (R + 2.6) / R);
+  // Drones work inside the net, a few metres off the netting.
+  return netPoint(Math.min(depth, WALL_DEPTH_M), base + sweep, 0.88);
 }
 
 export default function Pen3D({

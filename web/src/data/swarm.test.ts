@@ -8,15 +8,17 @@ const open = world.findings.filter((f) => f.detectedDay <= TODAY && !f.steps.som
 const drones = swarmState(world, TODAY, open);
 
 describe('swarmState', () => {
-  it('spreads drones out: at most one per pen', () => {
-    const pens = drones.filter((d) => d.penIndex !== null).map((d) => d.penIndex);
-    expect(new Set(pens).size).toBe(pens.length);
+  it('gives every pen a crew and never puts two drones on the same area', () => {
+    const working = drones.filter((d) => d.penIndex !== null);
+    expect(new Set(working.map((d) => d.penIndex)).size).toBe(world.pens.length);
+    const areas = working.map((d) => `${d.penIndex}/${d.cell}`);
+    expect(new Set(areas).size).toBe(areas.length);
+    expect(working.length).toBeGreaterThan(world.pens.length);
   });
 
-  it('keeps D7 docked and never sends anyone to Pen 8’s cone while it is', () => {
-    expect(drones.find((d) => d.id === 'D7')?.status).toBe('docked');
-    const pen8 = drones.find((d) => d.penIndex === 7);
-    if (pen8?.cell !== undefined && pen8.cell !== null) expect(cellRow(pen8.cell)).toBeLessThan(WALL_ROWS);
+  it('keeps one drone docked and never sends anyone to Pen 8’s cone while it is', () => {
+    expect(drones.filter((d) => d.status === 'docked')).toHaveLength(1);
+    for (const d of drones.filter((x) => x.penIndex === 7)) expect(cellRow(d.cell!)).toBeLessThan(WALL_ROWS);
   });
 
   it('keeps a drone on the open hole in Pen 2', () => {

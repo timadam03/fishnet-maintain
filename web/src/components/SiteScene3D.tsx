@@ -19,9 +19,16 @@ interface Props {
   live: boolean;
   open: Finding[];
   drones: Drone[];
+  /** The pen the user opened: the camera flies down into it, then the pen view takes over. */
+  focusPen: number | null;
   onOpenPen: (penIndex: number) => void;
   onSelectDrone: (id: string) => void;
 }
+
+/** Overview camera, and the camera offset the pen view starts from (so the hand-over is seamless). */
+const OVERVIEW = { position: new THREE.Vector3(40, 380, 600), target: new THREE.Vector3(0, -10, 0) };
+const PEN_OFFSET = new THREE.Vector3(85, 9, 95);
+const PEN_TARGET = new THREE.Vector3(0, -15, 0);
 
 const R = PEN_RADIUS_M;
 
@@ -39,9 +46,10 @@ interface SceneCtx {
   particles: THREE.Points;
   animate: (t: number) => void;
   camera: THREE.PerspectiveCamera;
+  controls: OrbitControls;
 }
 
-export default function SiteScene3D({ world, day, live, open, drones, onOpenPen, onSelectDrone }: Props) {
+export default function SiteScene3D({ world, day, live, open, drones, focusPen, onOpenPen, onSelectDrone }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const labelsRef = useRef<HTMLDivElement>(null);
   const ctx = useRef<SceneCtx | null>(null);
@@ -68,7 +76,7 @@ export default function SiteScene3D({ world, day, live, open, drones, onOpenPen,
     scene.add(sun);
 
     const camera = new THREE.PerspectiveCamera(34, 1, 1, 3000);
-    camera.position.set(40, 380, 600);
+    camera.position.copy(OVERVIEW.position);
 
     // Water surface, seabed and depth grid.
     const surface = new THREE.Mesh(
@@ -149,7 +157,7 @@ export default function SiteScene3D({ world, day, live, open, drones, onOpenPen,
     scene.add(particles);
 
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(0, -10, 0);
+    controls.target.copy(OVERVIEW.target);
     controls.maxPolarAngle = Math.PI * 0.49;
     controls.minDistance = 120;
     controls.maxDistance = 1100;
@@ -182,9 +190,11 @@ export default function SiteScene3D({ world, day, live, open, drones, onOpenPen,
           m.position.set(-400 + k * 6, 2, 250);
           return;
         }
+        // Inside the net, sweeping either side of its area.
         const centre = penPosition(world, d.penIndex);
-        const angle = t / (8 + k) + k;
-        const local = netPoint(Math.min(d.depth, WALL_DEPTH_M), (angle * 180) / Math.PI, (R + 4) / R);
+        const base = d.cell === null ? 0 : (d.cell % 24) * 15 + 7.5;
+        const angle = base + 14 * Math.sin(t / 3 + k);
+        const local = netPoint(Math.min(d.depth, WALL_DEPTH_M), angle, 0.8);
         m.position.copy(centre).add(local);
       });
       const a = (world.env.currentDir[Math.min(day, world.env.currentDir.length - 1)] * Math.PI) / 180;
@@ -249,7 +259,7 @@ export default function SiteScene3D({ world, day, live, open, drones, onOpenPen,
     el.addEventListener('pointerup', onUp);
     el.addEventListener('pointermove', onMove);
 
-    ctx.current = { render, textures, collars, droneGroup, particles, animate, camera };
+    ctx.current = { render, textures, collars, droneGroup, particles, animate, camera, controls };
     resize();
 
     return () => {
@@ -320,6 +330,30 @@ export default function SiteScene3D({ world, day, live, open, drones, onOpenPen,
     c.animate(timeRef.current);
   }, [drones]);
 
+  // Fly into the opened pen, or back out to the whole site.
+  useEffect(() => {
+    const c = ctx.current;
+    if (!c) return;
+    const toTarget = focusPen === null ? OVERVIEW.target.clone() : penPosition(world, focusPen).add(PEN_TARGET);
+    const toPosition = focusPen === null ? OVERVIEW.position.clone() : toTarget.clone().add(PEN_OFFSET);
+    const fromTarget = c.controls.target.clone();
+    const fromPosition = c.camera.position.clone();
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const start = performance.now();
+    let raf = 0;
+    const step = (now: number): void => {
+      const t = reduce ? 1 : Math.min(1, (now - start) / 900);
+      const k = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; // ease in and out
+      c.controls.target.lerpVectors(fromTarget, toTarget, k);
+      c.camera.position.lerpVectors(fromPosition, toPosition, k);
+      c.controls.update();
+      c.render();
+      if (t < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [focusPen, world]);
+
   // Live animation at about 30 frames a second.
   useEffect(() => {
     const c = ctx.current;
@@ -339,7 +373,7 @@ export default function SiteScene3D({ world, day, live, open, drones, onOpenPen,
   }, [live]);
 
   return (
-    <div ref={wrapRef} style={{ position: 'absolute', inset: 0 }}>
+    <div ref={wrapRef} className={`site3d${focusPen !== null ? ' focused' : ''}`}>
       <div ref={labelsRef} className="scene-labels">
         {world.pens.map((p) => {
           const holes = open.filter((f) => f.penId === p.id && f.kind === 'hole').length;

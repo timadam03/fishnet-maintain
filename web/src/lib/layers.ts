@@ -75,10 +75,8 @@ export const LAYERS: LayerDef[] = [
     format: (v) => `${Math.round(v * 100)}`,
     color: riskColor,
     legend: [
-      { value: 0.1, label: 'Low' },
-      { value: 0.3, label: 'Elevated 25+' },
-      { value: 0.55, label: 'High 50+' },
-      { value: 0.8, label: 'Critical 70+' },
+      { value: 0, label: 'Calm' },
+      { value: 1, label: 'Critical' },
     ],
   },
   {

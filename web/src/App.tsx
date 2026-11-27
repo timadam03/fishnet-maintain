@@ -1,37 +1,18 @@
-import { Suspense, lazy, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import { DAYS, STORM_FORECAST_DAY, TODAY, cellLabel, type World } from './data/model';
 import { generateWorld } from './data/simulate';
 import { CellPanel, DronePanel, FindingPanel, PenPanel, SitePanel } from './components/SidePanel';
 import { swarmState } from './data/swarm';
 import { Legend } from './components/Legend';
 import { PenView } from './components/PenView';
-import { SiteMap } from './components/SiteMap';
-import { NetAtlas } from './components/NetAtlas';
+import { RobotView } from './components/RobotView';
 import { TimeBar } from './components/TimeBar';
 import { layerById } from './lib/layers';
 import { fromHash, initialState, openFindings, reducer, statusAt, toHash } from './lib/state';
 import { riskShareSeries, summarisePen, topRiskAreas } from './lib/summary';
-import { THEMES, color, type ThemeId } from './lib/tokens';
+import { color } from './lib/tokens';
 
 const SiteScene3D = lazy(() => import('./components/SiteScene3D'));
-
-/** Alternative ways to draw the site level, switchable for comparison. */
-type SiteVersion = 'chart' | 'heat' | 'atlas' | 'site3d';
-const VERSIONS: Array<{ id: SiteVersion; short: string; name: string }> = [
-  { id: 'chart', short: 'V1', name: 'Chart: pens as risk rings' },
-  { id: 'heat', short: 'V2', name: 'Heat field over a bathymetric chart' },
-  { id: 'atlas', short: 'V3', name: 'Net atlas: every net as a disc' },
-  { id: 'site3d', short: 'V4', name: '3D site' },
-];
-const VERSION_KEY = 'shoal-version';
-function loadVersion(): SiteVersion {
-  try {
-    const v = window.localStorage.getItem(VERSION_KEY);
-    return VERSIONS.some((x) => x.id === v) ? (v as SiteVersion) : 'chart';
-  } catch {
-    return 'chart';
-  }
-}
 
 const world: World = generateWorld();
 const stormSummaries = world.pens.map((_, i) => summarisePen(world, i, STORM_FORECAST_DAY));
@@ -42,19 +23,9 @@ const siteShare = riskShareSeries(
   DAYS,
 );
 
-export default function App({ theme, onTheme }: { theme: ThemeId; onTheme: (id: ThemeId) => void }) {
+export default function App() {
   const [state, dispatch] = useReducer(reducer, initialState, (s) => ({ ...s, ...fromHash(window.location.hash, world.pens.length) }));
   const { penIndex, cell, findingId, day, layer, playing, reviews } = state;
-  const [version, setVersion] = useState<SiteVersion>(loadVersion);
-  const chooseVersion = (v: SiteVersion): void => {
-    setVersion(v);
-    try {
-      window.localStorage.setItem(VERSION_KEY, v);
-    } catch {
-      // Not remembering the version only means the default next time.
-    }
-  };
-
   const summaries = useMemo(() => world.pens.map((_, i) => summarisePen(world, i, day)), [day]);
   const open = useMemo(() => openFindings(world, day, reviews), [day, reviews]);
   const pen = penIndex === null ? null : world.pens[penIndex];
@@ -139,91 +110,16 @@ export default function App({ theme, onTheme }: { theme: ThemeId; onTheme: (id: 
   if (pen && penIndex !== null && cell !== null) crumbs.push({ label: cellLabel(cell), onClick: () => dispatch({ type: 'cell', penIndex, cell }) });
   if (finding) crumbs.push({ label: `Finding #${finding.id}`, onClick: () => dispatch({ type: 'finding', penIndex: penIndex ?? 0, cell: finding.cell, findingId: finding.id }) });
 
+  const openPen = useCallback((i: number): void => dispatch({ type: 'pen', penIndex: i }), []);
+  const selectDrone = useCallback((id: string): void => dispatch({ type: 'drone', id }), []);
+
   return (
     <div className="app">
-      <header className="topbar">
-        <div className="brand">
-          <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
-            <circle cx="10" cy="10" r="8.5" fill="none" stroke={color.ink} strokeWidth="1.5" />
-            <path d="M10 1.5v17M1.5 10h17" stroke={color.ink} strokeWidth="0.8" />
-            <circle cx="10" cy="10" r="4" fill={color.signal} />
-          </svg>
-          Shoal
-        </div>
-        <nav className="crumbs" aria-label="Breadcrumb">
-          {crumbs.map((c, i) => (
-            <span key={c.label} style={{ display: 'inline-flex', alignItems: 'center' }}>
-              {i > 0 && (
-                <span className="sep" aria-hidden="true">
-                  ›
-                </span>
-              )}
-              {i === crumbs.length - 1 ? (
-                <span className="crumb-current" aria-current="page">
-                  {c.label}
-                </span>
-              ) : (
-                <button onClick={c.onClick}>{c.label}</button>
-              )}
-            </span>
-          ))}
-        </nav>
-        <div className="spacer" />
-        <div className="segmented theme-switch" role="group" aria-label="Site version">
-          {VERSIONS.map((v) => (
-            <button key={v.id} data-text={v.short} aria-pressed={v.id === version} title={v.name} onClick={() => chooseVersion(v.id)}>
-              {v.short}
-            </button>
-          ))}
-        </div>
-        <div className="segmented theme-switch" role="group" aria-label="Colour theme">
-          {THEMES.map((t) => (
-            <button key={t.id} data-text={t.short} aria-pressed={t.id === theme} title={t.name} onClick={() => onTheme(t.id)}>
-              {t.short}
-            </button>
-          ))}
-        </div>
-        <span className="status-text optional" title="Every value in this demo comes from a simulation">
-          Demo data
-        </span>
-        <span className="status-text" title="Connection to the feed barge">
-          <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true">
-            <circle cx="4" cy="4" r="4" fill={color.live} />
-          </svg>
-          Barge connected
-        </span>
-      </header>
-
       <main className="stage">
-        {(version === 'chart' || version === 'heat') && (
-          <SiteMap
-            world={world}
-            day={day}
-            summaries={summaries}
-            open={open}
-            onOpenPen={(i) => dispatch({ type: 'pen', penIndex: i })}
-            focusPen={penIndex}
-            drones={drones}
-            selectedDrone={state.droneId}
-            onSelectDrone={(id) => dispatch({ type: 'drone', id })}
-            variant={version}
-          />
-        )}
-        {version === 'atlas' && !pen && <NetAtlas world={world} day={day} layerId={layer} open={open} dispatch={dispatch} />}
-        {version === 'site3d' && !pen && (
-          <Suspense fallback={<p className="stage-hint">Loading 3D site…</p>}>
-            <SiteScene3D
-              world={world}
-              day={day}
-              live={day === TODAY}
-              open={open}
-              drones={drones}
-              onOpenPen={(i) => dispatch({ type: 'pen', penIndex: i })}
-              onSelectDrone={(id) => dispatch({ type: 'drone', id })}
-            />
-          </Suspense>
-        )}
-        {pen && penIndex !== null ? (
+        <Suspense fallback={<p className="stage-hint">Loading 3D site…</p>}>
+          <SiteScene3D world={world} day={day} live={day === TODAY} open={open} drones={drones} focusPen={penIndex} onOpenPen={openPen} onSelectDrone={selectDrone} />
+        </Suspense>
+        {pen && penIndex !== null && (
           <PenView
             key={penIndex}
             world={world}
@@ -239,22 +135,53 @@ export default function App({ theme, onTheme }: { theme: ThemeId; onTheme: (id: 
             selectedDrone={state.droneId}
             dispatch={dispatch}
           />
-        ) : version === 'chart' || version === 'heat' || version === 'site3d' ? (
-          <>
-            <p className="stage-hint" style={{ top: 16, bottom: 'auto' }}>
-              {day > TODAY ? 'Forecast: predicted from weather and current forecasts, not measured.' : 'Select a pen to zoom in.'}
-            </p>
-            <div className="stage-controls bottom-right">
-              <Legend layer={layerById('risk')} />
-            </div>
-          </>
-        ) : null}
+        )}
+        {!pen && (
+          <div className="stage-controls bottom-left">
+            <Legend layer={layerById('risk')} />
+          </div>
+        )}
+        {drone && drone.penIndex !== null && <RobotView world={world} day={day} drone={drone} onClose={() => dispatch({ type: 'drone', id: null })} />}
         <div className="timebar">
           <TimeBar day={day} playing={playing} operations={world.operations} findings={world.findings} penId={pen?.id ?? null} dispatch={dispatch} />
         </div>
       </main>
 
       <aside className="side" aria-label="Details">
+        <header className="side-header">
+          <div className="brand">
+            <svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true">
+              <circle cx="10" cy="10" r="8.5" fill="none" stroke={color.ink} strokeWidth="1.5" />
+              <path d="M10 1.5v17M1.5 10h17" stroke={color.ink} strokeWidth="0.8" />
+              <circle cx="10" cy="10" r="4" fill={color.signal} />
+            </svg>
+            Shoal
+            <span className="status-text" title="Every value in this demo comes from a simulation. Feed barge connected.">
+              <svg width="7" height="7" viewBox="0 0 8 8" aria-hidden="true">
+                <circle cx="4" cy="4" r="4" fill={color.live} />
+              </svg>
+              Demo data
+            </span>
+          </div>
+          <nav className="crumbs" aria-label="Breadcrumb">
+            {crumbs.map((c, i) => (
+              <span key={c.label} style={{ display: 'inline-flex', alignItems: 'center' }}>
+                {i > 0 && (
+                  <span className="sep" aria-hidden="true">
+                    ›
+                  </span>
+                )}
+                {i === crumbs.length - 1 ? (
+                  <span className="crumb-current" aria-current="page">
+                    {c.label}
+                  </span>
+                ) : (
+                  <button onClick={c.onClick}>{c.label}</button>
+                )}
+              </span>
+            ))}
+          </nav>
+        </header>
         {side}
       </aside>
     </div>
