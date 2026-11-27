@@ -1,0 +1,397 @@
+{
+  "plan_id": "pen7-d89-1cdf39e4",
+  "created_at": "2026-11-27T23:00:00.000Z",
+  "pen_id": 7,
+  "day": 89,
+  "rules_version": "plan-v1",
+  "grid": {
+    "sectors": 24,
+    "wall_rows": 8
+  },
+  "robots": 3,
+  "targets": [
+    {
+      "target_id": "m1",
+      "mission_id": 1,
+      "cell": 30,
+      "row": 1,
+      "col": 6,
+      "theta_deg": 97.5,
+      "depth_frac": 0.1875,
+      "priority": 1,
+      "priority_label": "high",
+      "reasons": [
+        {
+          "rule": "area",
+          "text": "2.5–5 m, 90–105° (cell 30)"
+        },
+        {
+          "rule": "P1",
+          "text": "Possible opening (p=0.75) seen once: confirm from two sides with two robots, keep off the net."
+        }
+      ],
+      "scan": {
+        "standoff_m": 1.55,
+        "shots": 2,
+        "viewpoints": [
+          {
+            "d_theta_deg": -6,
+            "d_depth_frac": 0
+          },
+          {
+            "d_theta_deg": 6,
+            "d_depth_frac": 0
+          }
+        ]
+      },
+      "safety": {
+        "margin_m": 1
+      },
+      "robots": [
+        0,
+        1
+      ]
+    },
+    {
+      "target_id": "m2",
+      "mission_id": 2,
+      "cell": 100,
+      "row": 4,
+      "col": 4,
+      "theta_deg": 67.5,
+      "depth_frac": 0.5625,
+      "priority": 0.77,
+      "priority_label": "normal",
+      "reasons": [
+        {
+          "rule": "area",
+          "text": "10–12.5 m, 60–75° (cell 100)"
+        },
+        {
+          "rule": "P2",
+          "text": "Unsure (p=0.56): re-image closer and with more shots."
+        }
+      ],
+      "scan": {
+        "standoff_m": 1.15,
+        "shots": 3,
+        "viewpoints": [
+          {
+            "d_theta_deg": 0,
+            "d_depth_frac": 0
+          }
+        ]
+      },
+      "safety": {
+        "margin_m": 0.6
+      },
+      "robots": [
+        0
+      ]
+    },
+    {
+      "target_id": "m3",
+      "mission_id": 3,
+      "cell": 150,
+      "row": 6,
+      "col": 6,
+      "theta_deg": 97.5,
+      "depth_frac": 0.8125,
+      "priority": 0.73,
+      "priority_label": "normal",
+      "reasons": [
+        {
+          "rule": "area",
+          "text": "15–17.5 m, 90–105° (cell 150)"
+        },
+        {
+          "rule": "P2",
+          "text": "Unsure (p=0.43): re-image closer and with more shots."
+        }
+      ],
+      "scan": {
+        "standoff_m": 1.15,
+        "shots": 3,
+        "viewpoints": [
+          {
+            "d_theta_deg": 0,
+            "d_depth_frac": 0
+          }
+        ]
+      },
+      "safety": {
+        "margin_m": 0.6
+      },
+      "robots": [
+        1
+      ]
+    },
+    {
+      "target_id": "m4",
+      "mission_id": 4,
+      "cell": 188,
+      "row": 7,
+      "col": 20,
+      "theta_deg": 307.5,
+      "depth_frac": 0.9375,
+      "priority": 0.58,
+      "priority_label": "normal",
+      "reasons": [
+        {
+          "rule": "area",
+          "text": "17.5–20 m, 300–315° (cell 188)"
+        },
+        {
+          "rule": "P6",
+          "text": "Risk model: high (0.57) from history and exposure."
+        }
+      ],
+      "scan": {
+        "standoff_m": 1.35,
+        "shots": 2,
+        "viewpoints": [
+          {
+            "d_theta_deg": 0,
+            "d_depth_frac": 0
+          }
+        ]
+      },
+      "safety": {
+        "margin_m": 0.8
+      },
+      "robots": [
+        2
+      ]
+    },
+    {
+      "target_id": "m5",
+      "mission_id": 5,
+      "cell": 60,
+      "row": 2,
+      "col": 12,
+      "theta_deg": 187.5,
+      "depth_frac": 0.3125,
+      "priority": 0.5,
+      "priority_label": "normal",
+      "reasons": [
+        {
+          "rule": "area",
+          "text": "5–7.5 m, 180–195° (cell 60)"
+        },
+        {
+          "rule": "P4",
+          "text": "Fouling covers 60% and can hide holes: look from two angles."
+        }
+      ],
+      "scan": {
+        "standoff_m": 1.2,
+        "shots": 1,
+        "viewpoints": [
+          {
+            "d_theta_deg": -8,
+            "d_depth_frac": 0
+          },
+          {
+            "d_theta_deg": 8,
+            "d_depth_frac": 0
+          }
+        ]
+      },
+      "safety": {
+        "margin_m": 0.6
+      },
+      "robots": [
+        2
+      ]
+    }
+  ],
+  "coverage": [
+    1,
+    27,
+    33,
+    98,
+    130,
+    142,
+    3,
+    6,
+    7,
+    8,
+    18,
+    22,
+    35,
+    38,
+    40,
+    41,
+    42,
+    44,
+    49,
+    51,
+    59,
+    65,
+    66,
+    77,
+    83,
+    84,
+    85,
+    87,
+    88,
+    91,
+    99,
+    104,
+    106,
+    108,
+    109,
+    112,
+    114,
+    117,
+    118,
+    120,
+    123,
+    125,
+    132,
+    136,
+    137,
+    143,
+    144,
+    148,
+    151,
+    156,
+    161,
+    172,
+    185,
+    190,
+    0,
+    2,
+    10,
+    12,
+    13,
+    15,
+    16,
+    24,
+    25,
+    52,
+    55,
+    57,
+    58,
+    62,
+    64,
+    71,
+    75,
+    79,
+    93,
+    96,
+    102,
+    107,
+    113,
+    121,
+    122,
+    126,
+    131,
+    135,
+    139,
+    145,
+    146,
+    153,
+    155,
+    157,
+    159,
+    160,
+    162,
+    164,
+    168,
+    169,
+    176,
+    179,
+    180,
+    181,
+    187,
+    191,
+    11,
+    14,
+    21,
+    23,
+    26,
+    29,
+    31,
+    34,
+    37,
+    43,
+    45,
+    47,
+    48,
+    50,
+    56,
+    63,
+    68,
+    69,
+    72,
+    76,
+    78,
+    81,
+    86,
+    90,
+    94,
+    95,
+    101,
+    103,
+    105,
+    110,
+    111,
+    115,
+    116,
+    129,
+    133,
+    134,
+    138,
+    152,
+    165,
+    170,
+    174,
+    177,
+    178,
+    4,
+    5,
+    9,
+    17,
+    19,
+    20,
+    28,
+    32,
+    36,
+    39,
+    46,
+    53,
+    54,
+    61,
+    67,
+    70,
+    73,
+    74,
+    80,
+    82,
+    89,
+    92,
+    97,
+    119,
+    124,
+    127,
+    128,
+    140,
+    141,
+    147,
+    149,
+    154,
+    158,
+    163,
+    166,
+    167,
+    171,
+    173,
+    175,
+    182,
+    183,
+    184,
+    186,
+    189
+  ]
+}
