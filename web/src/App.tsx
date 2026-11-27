@@ -110,6 +110,7 @@ export default function App() {
   if (pen && penIndex !== null && cell !== null) crumbs.push({ label: cellLabel(cell), onClick: () => dispatch({ type: 'cell', penIndex, cell }) });
   if (finding) crumbs.push({ label: `Finding #${finding.id}`, onClick: () => dispatch({ type: 'finding', penIndex: penIndex ?? 0, cell: finding.cell, findingId: finding.id }) });
 
+  const penRisk = useMemo(() => summaries.map((s) => s.maxRisk), [summaries]);
   const openPen = useCallback((i: number): void => dispatch({ type: 'pen', penIndex: i }), []);
   const selectDrone = useCallback((id: string): void => dispatch({ type: 'drone', id }), []);
 
@@ -117,7 +118,7 @@ export default function App() {
     <div className="app">
       <main className="stage">
         <Suspense fallback={<p className="stage-hint">Loading 3D site…</p>}>
-          <SiteScene3D world={world} day={day} live={day === TODAY} open={open} drones={drones} focusPen={penIndex} onOpenPen={openPen} onSelectDrone={selectDrone} />
+          <SiteScene3D world={world} day={day} live={day === TODAY} open={open} drones={drones} focusPen={penIndex} penRisk={penRisk} onOpenPen={openPen} onSelectDrone={selectDrone} />
         </Suspense>
         {pen && penIndex !== null && (
           <PenView
