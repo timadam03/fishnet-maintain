@@ -1,0 +1,5 @@
+{"image":"auv_0/img_0000.png","model":"stand-in-ground-truth","quality":{"visibility":0.54,"sharpness":0.65},"fouling_pct":0,"detections":[{"class":"hole","confidence":0.75,"bbox":[256,144,128,72],"size_m":0.9}]}
+{"image":"auv_0/img_0001.png","model":"stand-in-ground-truth","quality":{"visibility":0.6,"sharpness":0.64},"fouling_pct":0,"detections":[{"class":"mesh_opening","confidence":0.56,"bbox":[256,144,128,72],"size_m":0.2}]}
+{"image":"auv_0/img_0002.png","model":"stand-in-ground-truth","quality":{"visibility":0.57,"sharpness":0.69},"fouling_pct":0,"detections":[{"class":"thinning","confidence":0.43,"bbox":[200,120,240,120]}]}
+{"image":"auv_0/img_0003.png","model":"stand-in-ground-truth","quality":{"visibility":0.61,"sharpness":0.63},"fouling_pct":0.6,"detections":[{"class":"biofouling","confidence":0.84,"bbox":[0,0,640,360]}]}
+{"image":"auv_0/img_0004.png","model":"stand-in-ground-truth","quality":{"visibility":0.63,"sharpness":0.7},"fouling_pct":0,"detections":[]}

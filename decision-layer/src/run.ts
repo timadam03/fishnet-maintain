@@ -14,6 +14,9 @@ import { modelStatus, openStore } from './app.ts';
 import { runCurator } from './curator.ts';
 import { defaultDecisionModel } from './d1.ts';
 import { findingById, oxygenEventText, penDecisions, siteAlerts } from './engine.ts';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { buildPlan, importObservations } from './inspection.ts';
 import { ask } from './investigator.ts';
 import { missions, recordDay, trace, updateMission } from './log.ts';
 import { sameFinding, similarEpisodes } from './memory.ts';
@@ -22,6 +25,12 @@ import { TODAY, dayLabel } from './world.ts';
 
 const store = openStore();
 const [command, ...args] = process.argv.slice(2);
+/** Which UI pen the Isaac pen stands in for (the sag case in Pen 7 by default). */
+const ISAAC_PEN = Number(process.env.ISAAC_PEN ?? 7);
+const flag = (name: string, fallback: string): string => {
+  const i = args.indexOf(`--${name}`);
+  return i >= 0 && args[i + 1] !== undefined ? args[i + 1] : fallback;
+};
 
 async function demo(): Promise<void> {
   const models = modelStatus();
@@ -98,6 +107,32 @@ async function main(): Promise<void> {
     case 'trace':
       printTrace(args[0] ?? '');
       return;
+    case 'import': {
+      // import <run_dir> [--pen 7] [--vision <file>]: Isaac captures + pipeline reports → observations
+      const dir = args[0];
+      if (!dir || dir.startsWith('--')) throw new Error('usage: import <run_dir> [--pen N] [--vision <file>]');
+      const lines = (path: string): unknown[] => readFileSync(path, 'utf8').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l));
+      const truthPath = join(dir, 'ground_truth.json');
+      const cageRadiusM = existsSync(truthPath) ? (JSON.parse(readFileSync(truthPath, 'utf8')).grid?.cage_radius_m as number | undefined) : undefined;
+      const result = importObservations(store, {
+        penId: Number(flag('pen', String(ISAAC_PEN))),
+        captures: lines(join(dir, 'captures.jsonl')),
+        reports: lines(flag('vision', join(dir, 'vision.jsonl'))),
+        cageRadiusM: cageRadiusM ?? 8,
+      });
+      console.log(`imported ${result.imported} observations; ${result.awaitingVision} captures have no vision report yet; ${result.unmatchedReports.length} reports had no capture`);
+      for (const m of result.missionsClosed) console.log(`mission #${m.missionId} done → ${m.result}`);
+      return;
+    }
+    case 'plan': {
+      // plan [--pen 7] [--robots 3] [--out plan.json]: what the robots should do next
+      const plan = buildPlan(store, { penId: Number(flag('pen', String(ISAAC_PEN))), day: TODAY, robots: Number(flag('robots', '3')) });
+      const out = flag('out', '');
+      if (out) writeFileSync(out, JSON.stringify(plan, null, 2));
+      for (const t of plan.targets) console.log(`${t.target_id} [${t.priority_label} ${t.priority}] cell ${t.cell} → AUV ${t.robots.join('+')}, ${t.scan.standoff_m} m, ${t.scan.viewpoints.length} view(s) × ${t.scan.shots}, margin ${t.safety.margin_m} m | ${t.reasons.slice(1).map((r) => r.rule).join('+')}: ${t.reasons[1].text}`);
+      console.log(`${plan.targets.length} targets, then ${plan.coverage.length} cells of coverage${out ? `; written to ${out}` : ''}`);
+      return;
+    }
     case 'missions':
       for (const m of missions(store, { status: args[0] as never })) console.log(`#${m.id} ${m.status} ${m.kind} Pen ${m.penId} ${m.priority} ${m.areas.slice(0, 3).join('; ')}${m.areas.length > 3 ? ` (+${m.areas.length - 3})` : ''}: ${m.reason}${m.result ? ` → ${m.result}` : ''}`);
       return;
@@ -111,7 +146,7 @@ async function main(): Promise<void> {
       console.log('cleared reviews, alert closures, proposals, chat, decision log and missions');
       return;
     default:
-      console.log('commands: demo | ask "<question>" | curator | accept <id> | record [day] | trace <entity> | missions [status] | mission <id> <assigned|done|cancelled> [result] | reset');
+      console.log('commands: demo | ask "<question>" | curator | accept <id> | record [day] | trace <entity> | missions [status] | mission <id> <assigned|done|cancelled> [result] | import <run_dir> [--pen N] [--vision file] | plan [--pen N] [--robots N] [--out file] | reset');
       process.exitCode = 1;
   }
 }

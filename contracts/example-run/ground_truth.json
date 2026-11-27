@@ -1,0 +1,9 @@
+{
+  "run_id": "example",
+  "grid": {
+    "ui_sectors": 24,
+    "ui_wall_rows": 8,
+    "cage_radius_m": 8,
+    "cage_depth_m": 8
+  }
+}

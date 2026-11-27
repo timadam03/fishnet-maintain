@@ -15,6 +15,7 @@ What it adds to the UI:
 | Learning | `src/curator.ts` | Review statistics per finding kind and confidence → at most one proposal from an allowed list; a person accepts it; the rules change |
 | Investigator | `src/investigator.ts` | Answers operator questions with read-only tools over decisions, risk history, findings, operations and memory |
 | Decision log and missions | `src/log.ts` | Records each non-OK decision once per day and rules version: what it saw, which rules fired, memory links, what it did. A rule change adds entries, never rewrites them. Turns inspections and re-samples into missions for the robots (one open mission per target), which robots or the simulator mark assigned/done with a result. A trace per area, finding or pen reads saw → decided → did → outcome |
+| Robots and vision | `src/contracts.ts`, `src/inspection.ts` | Joins Isaac captures with image-pipeline reports into observations, closes missions from the photos taken for them, and builds the inspection plan: which areas next, how close, how many viewpoints, which robots and what safety margin (rules P1–P6, G1, S1). See [`docs/contracts.md`](../docs/contracts.md) |
 | API | `src/server.ts` | JSON over HTTP for the UI, and missions for robots |
 
 All thresholds are demo starting values, not research findings. The seeded episodes are invented. Nothing
@@ -53,7 +54,11 @@ npm run cli -- ask "Why is Pen 7 at 17.5–20 m high risk?"
 npm run cli -- trace cell:7:188              # saw → decided → did → outcome (also finding:<id>, oxygen:<pen>)
 npm run cli -- missions requested            # work waiting for the robots
 npm run cli -- mission 1 done confirmed      # report a result, as a robot would
-npm run cli -- reset          # clear reviews, closures, proposals, chat, decision log and missions
+npm run cli -- import <run_dir>              # Isaac captures + vision.jsonl → observations, closes missions
+npm run cli -- plan --out plan.json          # inspection plan for the robots (see docs/contracts.md)
+npm run stand-in-vision -- <run_dir>         # stand-in vision.jsonl from Isaac ground truth, until the real pipeline is wired
+npm run contracts                            # regenerate ../contracts/ (schemas and example run)
+npm run cli -- reset          # clear reviews, closures, proposals, chat, decision log, missions and observations
 ```
 
 ## Test
@@ -84,6 +89,8 @@ npm run typecheck
 | `GET /api/trace?entity=` | | `cell:<pen>:<cell>`, `finding:<id>` or `oxygen:<pen>` → steps of saw / decided / did / outcome, oldest first |
 | `GET /api/missions?status=&pen=` | | missions (high priority first): kind, net areas, reason, status, robot, result |
 | `POST /api/missions/:id` | `{status: assigned\|done\|cancelled, robot?, result?, note?}` | the mission; for robots or the simulator |
+| `POST /api/observations` | `{pen_id, captures, reports, cage_radius_m?}` | `{imported, awaitingVision, unmatchedReports, missionsClosed}` |
+| `GET /api/plan?pen=&robots=&day=` | | inspection plan (contracts/inspection-plan.schema.json) |
 | `POST /api/reset` | | `{ok}` |
 
 `GET /api/alerts` and `GET /api/pens/:id` record the requested day in the decision log before answering.

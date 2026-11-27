@@ -48,6 +48,12 @@ export class Store {
         level TEXT, rules_json TEXT NOT NULL, rules_version TEXT NOT NULL, reason TEXT NOT NULL,
         recommend TEXT, inputs_json TEXT NOT NULL, links_json TEXT NOT NULL, alert_key TEXT,
         mission_id INTEGER);
+      -- What the robots photographed and the image pipeline saw, one row per image (inspection.ts).
+      CREATE TABLE IF NOT EXISTS observations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, image TEXT NOT NULL, pen_id INTEGER NOT NULL,
+        cell INTEGER NOT NULL, auv INTEGER, sim_time REAL, standoff_m REAL, target_id TEXT, model TEXT NOT NULL,
+        quality_json TEXT, fouling REAL, detections_json TEXT NOT NULL, imported_at TEXT NOT NULL,
+        UNIQUE (run_id, image));
       -- Work the decision layer asks the swarm to do; robots (Isaac, the UI's swarm) report back here.
       CREATE TABLE IF NOT EXISTS missions (
         id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL,
@@ -132,7 +138,7 @@ export class Store {
   reset(): void {
     // Also restart the id counters, so a fresh demo run shows proposal 1 again.
     this.db.exec(`DELETE FROM reviews; DELETE FROM alert_closures; DELETE FROM proposals; DELETE FROM chat_messages;
-      DELETE FROM decision_log; DELETE FROM missions;
-      DELETE FROM sqlite_sequence WHERE name IN ('proposals', 'chat_messages', 'decision_log', 'missions');`);
+      DELETE FROM decision_log; DELETE FROM missions; DELETE FROM observations;
+      DELETE FROM sqlite_sequence WHERE name IN ('proposals', 'chat_messages', 'decision_log', 'missions', 'observations');`);
   }
 }

@@ -1,0 +1,222 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "plan_id": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "pen_id": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "day": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "rules_version": {
+      "type": "string"
+    },
+    "grid": {
+      "type": "object",
+      "properties": {
+        "sectors": {
+          "type": "number",
+          "const": 24
+        },
+        "wall_rows": {
+          "type": "number",
+          "const": 8
+        }
+      },
+      "required": [
+        "sectors",
+        "wall_rows"
+      ]
+    },
+    "robots": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "target_id": {
+            "type": "string",
+            "description": "Copy into the capture record of every photo taken for this target"
+          },
+          "mission_id": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "cell": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 191,
+            "description": "Wall cell on the UI grid: row * 24 + col"
+          },
+          "row": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "col": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "theta_deg": {
+            "type": "number",
+            "description": "Centre of the cell"
+          },
+          "depth_frac": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Centre of the cell as a fraction of the net wall depth (0 = surface)"
+          },
+          "priority": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "priority_label": {
+            "type": "string",
+            "enum": [
+              "high",
+              "normal",
+              "low"
+            ]
+          },
+          "reasons": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "rule": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "rule",
+                "text"
+              ]
+            }
+          },
+          "scan": {
+            "type": "object",
+            "properties": {
+              "standoff_m": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "Distance from the net for the photos"
+              },
+              "shots": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991,
+                "description": "Photos per viewpoint"
+              },
+              "viewpoints": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "d_theta_deg": {
+                      "type": "number"
+                    },
+                    "d_depth_frac": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "d_theta_deg",
+                    "d_depth_frac"
+                  ]
+                },
+                "description": "Offsets from the cell centre; several = look from different angles"
+              }
+            },
+            "required": [
+              "standoff_m",
+              "shots",
+              "viewpoints"
+            ]
+          },
+          "safety": {
+            "type": "object",
+            "properties": {
+              "margin_m": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "HOCBF inflation to use while on this target"
+              }
+            },
+            "required": [
+              "margin_m"
+            ]
+          },
+          "robots": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "description": "Which AUVs do this target; two = two perspectives"
+          }
+        },
+        "required": [
+          "target_id",
+          "mission_id",
+          "cell",
+          "row",
+          "col",
+          "theta_deg",
+          "depth_frac",
+          "priority",
+          "priority_label",
+          "reasons",
+          "scan",
+          "safety",
+          "robots"
+        ]
+      }
+    },
+    "coverage": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 191,
+        "description": "Wall cell on the UI grid: row * 24 + col"
+      },
+      "description": "After the targets: cells to sweep as usual, stalest first"
+    }
+  },
+  "required": [
+    "plan_id",
+    "created_at",
+    "pen_id",
+    "day",
+    "rules_version",
+    "grid",
+    "robots",
+    "targets",
+    "coverage"
+  ]
+}

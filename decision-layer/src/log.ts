@@ -62,7 +62,7 @@ const linkOf = (l: Link) => ({ to: l.episode.id, probability: l.probability, lin
  * So the same stale areas or risky cell don't produce a new mission every day; once a robot
  * finishes it, a later decision can ask again.
  */
-function ensureMission(store: Store, base: string, m: Omit<Mission, 'id' | 'date' | 'areas' | 'status' | 'robot' | 'result' | 'note'>): number {
+export function ensureMission(store: Store, base: string, m: Omit<Mission, 'id' | 'date' | 'areas' | 'status' | 'robot' | 'result' | 'note'>): number {
   const open = store.db
     .prepare("SELECT id FROM missions WHERE (key = ? OR key LIKE ? ESCAPE '\\') AND status IN ('requested', 'assigned') ORDER BY id DESC LIMIT 1")
     .get(base, `${base.replace(/[\\%_]/g, '\\$&')}@%`) as { id: number } | undefined;

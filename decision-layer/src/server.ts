@@ -9,6 +9,7 @@ import { modelStatus, openStore } from './app.ts';
 import { runCurator } from './curator.ts';
 import { defaultDecisionModel } from './d1.ts';
 import { findingById, oxygenEventText, penDecisions, siteAlerts } from './engine.ts';
+import { buildPlan, importObservations } from './inspection.ts';
 import { ask } from './investigator.ts';
 import { logEntries, missions, recordDay, trace, updateMission } from './log.ts';
 import { sameFinding, similarEpisodes } from './memory.ts';
@@ -72,6 +73,23 @@ async function route(req: IncomingMessage, url: URL): Promise<unknown> {
     if (!status.success) throw new HttpError(400, 'status must be requested, assigned, done or cancelled');
     const pen = url.searchParams.get('pen');
     return missions(store, { status: status.data, penId: pen === null ? undefined : Number(pen) });
+  }
+  if (method === 'POST' && path === '/api/observations') {
+    // Isaac captures + image-pipeline reports (contracts.ts); closes missions whose photos came back.
+    const b = await body(req, z.object({ pen_id: z.number().int(), captures: z.array(z.unknown()).default([]), reports: z.array(z.unknown()), cage_radius_m: z.number().positive().optional() }));
+    try {
+      return importObservations(store, { penId: b.pen_id, captures: b.captures, reports: b.reports, cageRadiusM: b.cage_radius_m });
+    } catch (error) {
+      if (error instanceof z.ZodError) throw new HttpError(400, error.message);
+      throw error;
+    }
+  }
+  if (method === 'GET' && path === '/api/plan') {
+    const pen = Number(url.searchParams.get('pen') ?? 7);
+    if (!world.pens.some((p) => p.id === pen)) throw new HttpError(404, `unknown pen ${pen}`);
+    const robots = Number(url.searchParams.get('robots') ?? 3);
+    if (!Number.isInteger(robots) || robots < 1 || robots > 20) throw new HttpError(400, 'robots must be 1–20');
+    return buildPlan(store, { penId: pen, day: dayParam(url), robots });
   }
   const mm = path.match(/^\/api\/missions\/(\d+)$/);
   if (method === 'POST' && mm) {

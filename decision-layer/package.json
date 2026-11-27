@@ -12,7 +12,9 @@
     "test": "tsx --test test/*.test.ts",
     "typecheck": "tsc",
     "cli": "tsx --env-file-if-exists=../.env src/run.ts",
-    "setup": "bash scripts/setup-and-run.sh"
+    "setup": "bash scripts/setup-and-run.sh",
+    "contracts": "tsx scripts/export-contracts.ts",
+    "stand-in-vision": "tsx scripts/stand-in-vision.ts"
   },
   "dependencies": {
     "@ai-sdk/gateway": "4.0.135",

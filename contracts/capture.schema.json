@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "image": {
+      "type": "string",
+      "description": "Image path relative to the run folder, e.g. auv_1/img_0003.png"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "auv": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "sim_time": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Seconds since the run started"
+    },
+    "theta_deg": {
+      "type": "number"
+    },
+    "depth": {
+      "type": "number",
+      "description": "z in metres, negative below the surface"
+    },
+    "position": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "items": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "cell": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 191,
+      "description": "Wall cell on the UI grid: row * 24 + col"
+    },
+    "target_id": {
+      "description": "Set when the photo was taken for a plan target (see InspectionPlan)",
+      "type": "string"
+    },
+    "fouling_frac": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "thinning_frac": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "holes_in_view": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "cell": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 191,
+            "description": "Wall cell on the UI grid: row * 24 + col"
+          },
+          "radius": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "cell",
+          "radius"
+        ],
+        "additionalProperties": {}
+      }
+    }
+  },
+  "required": [
+    "image",
+    "run_id",
+    "auv",
+    "sim_time",
+    "theta_deg",
+    "depth",
+    "position",
+    "cell"
+  ],
+  "additionalProperties": {}
+}
