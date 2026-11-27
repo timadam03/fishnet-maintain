@@ -2,8 +2,8 @@
  * Design tokens: the single source for every colour ("paper and ink" theme).
  *
  * CSS reads the colours as custom properties on :root (set in main.tsx); canvas, SVG and three.js
- * code imports them directly. The palette is nearly monochrome: colour appears only where hole risk
- * is high, so danger stands out.
+ * code imports them directly. The palette is nearly monochrome: warm warning colours (amber, orange,
+ * burnt red) appear only where hole risk rises, so danger stands out without reading as blood.
  */
 export interface Palette {
   page: string;
@@ -54,9 +54,9 @@ export const color: Palette = {
   live: '#3c7a3c',
   riskLow0: '#f2f2f0',
   riskLow1: '#dcdbd7',
-  riskElevated: '#b3b1ac',
-  riskHigh: '#e0634b',
-  riskCritical: '#c32f1d',
+  riskElevated: '#f0c56e',
+  riskHigh: '#ec9a3c',
+  riskCritical: '#c2421f',
   hatch: 'rgba(29, 29, 27, 0.45)',
   cameraWater: '#4b5356',
   cameraTwine: '#c7d3dc',
@@ -72,11 +72,11 @@ export const ageRamp = ['#f4f4f2', '#e3e3e0', '#cbcbc7', '#aeada9', '#8f8e8a', '
 /** Hole risk as a continuous scale of [score, colour] stops; levels at 0.25 / 0.5 / 0.7. */
 export const riskStops: Array<[number, string]> = [
   [0, '#f2f2f0'],
-  [0.2, '#dcdbd7'],
-  [0.35, '#b3b1ac'],
-  [0.5, '#e0634b'],
-  [0.7, '#c32f1d'],
-  [1, '#7a160b'],
+  [0.2, '#efe6cf'],
+  [0.35, '#f0c56e'],
+  [0.5, '#ec9a3c'],
+  [0.7, '#d9652a'],
+  [1, '#a8371f'],
 ];
 
 /** Kebab-case CSS custom properties for every colour token. */

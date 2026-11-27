@@ -116,9 +116,9 @@ export default function App() {
 
   return (
     <div className="app">
-      <main className="stage" style={{ background: environment.haze }}>
+      <main className="stage" style={{ background: `linear-gradient(180deg, ${environment.sky} 0%, ${environment.haze} 55%)` }}>
         <Suspense fallback={<p className="stage-hint">Loading 3D site…</p>}>
-          <SiteScene3D world={world} day={day} live={day === TODAY} open={open} drones={drones} focusPen={penIndex} penRisk={penRisk} env={environment} onOpenPen={openPen} onSelectDrone={selectDrone} />
+          <SiteScene3D world={world} day={day} live={day === TODAY} open={open} drones={drones} focusPen={penIndex} penRisk={penRisk} onOpenPen={openPen} onSelectDrone={selectDrone} />
         </Suspense>
         {pen && penIndex !== null && (
           <PenView

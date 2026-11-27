@@ -1,18 +1,24 @@
 /**
- * Colours for the natural surroundings in 3D (water, land, haze, current): the "fjord" palette.
- * Kept apart from the paper-and-ink interface colours so the scene has life while red stays
- * reserved for risk.
+ * Colours for the natural surroundings in 3D: a Nordic fjord in late autumn. Kept apart from the
+ * paper-and-ink interface colours so the scene has character while red stays reserved for risk.
  */
 export const environment = {
-  shallow: '#dcecee',
-  deep: '#8fb3bd',
-  landLow: '#e9e5d6',
-  landHigh: '#c9d1b8',
-  contour: '#6d8c93',
-  /** Haze in the distance and the stage background. */
-  haze: '#eef3f3',
+  shallow: '#cfe4e6',
+  deep: '#7ea5b0',
+  sand: '#d9d2bb',
+  meadow: '#93a87e',
+  forest: '#5a7456',
+  rock: '#9c9a91',
+  snow: '#f3f5f5',
+  contour: '#55767e',
+  /** Haze at the horizon (fog colour) and the sky above it. */
+  haze: '#dfe9ee',
+  sky: '#cfe0ea',
   current: '#24525d',
-  surfaceOpacity: 0.22,
+  surfaceOpacity: 0.2,
+  /** HDPE floating collars are dark grey-black on real farms. */
+  collar: '#3a4144',
+  collarHover: '#55767e',
 };
 
 export type Environment = typeof environment;

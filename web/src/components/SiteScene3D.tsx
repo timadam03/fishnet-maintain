@@ -11,8 +11,8 @@ import type { Drone } from '../data/swarm';
 import { paintNetTexture } from '../lib/heat';
 import { computeLayerGrid, layerById } from '../lib/layers';
 import { buildNetGeometry, netPoint } from '../lib/netGeometry';
-import { ROBOT_COLOR, placeholderGeometry, robotGeometry } from '../lib/robotModel';
-import { NET_OPACITY, type Environment } from '../lib/environment';
+import { ROBOT_COLOR, placeholderGeometry, robotTemplate } from '../lib/robotModel';
+import { NET_OPACITY, environment as env } from '../lib/environment';
 import { TERRAIN, heightAt, paintTerrain } from '../lib/terrain';
 import { riskColor } from '../lib/layers';
 import { color } from '../lib/tokens';
@@ -25,10 +25,8 @@ interface Props {
   drones: Drone[];
   /** The pen the user opened: the camera flies down into it, then the pen view takes over. */
   focusPen: number | null;
-  /** Worst hole risk per pen today, for the halos on the water. */
+  /** Worst hole risk per pen today, for the risk rings and labels. */
   penRisk: number[];
-  /** Colours for water, land, haze and current. */
-  env: Environment;
   onOpenPen: (penIndex: number) => void;
   onSelectDrone: (id: string) => void;
 }
@@ -51,15 +49,13 @@ interface SceneCtx {
   textures: { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture }[];
   collars: THREE.Mesh<THREE.TorusGeometry, THREE.MeshLambertMaterial>[];
   droneGroup: THREE.Group;
-  halos: THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>[];
-  /** Repaints water, land, haze and current in an environment palette. */
-  setEnvironment: (env: Environment) => void;
+  halos: THREE.Mesh<THREE.TorusGeometry, THREE.MeshBasicMaterial>[];
   animate: (t: number) => void;
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
 }
 
-export default function SiteScene3D({ world, day, live, open, drones, focusPen, penRisk, env, onOpenPen, onSelectDrone }: Props) {
+export default function SiteScene3D({ world, day, live, open, drones, focusPen, penRisk, onOpenPen, onSelectDrone }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const labelsRef = useRef<HTMLDivElement>(null);
   const ctx = useRef<SceneCtx | null>(null);
@@ -82,25 +78,27 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
     wrap.prepend(renderer.domElement);
 
     const scene = new THREE.Scene();
-    scene.fog = new THREE.Fog(color.page, 700, 1700);
+    // Gentle haze far away, tinted like the sky, so the land fades out instead of turning to dust.
+    scene.fog = new THREE.Fog(env.haze, 1400, 4800);
     scene.background = null;
     scene.add(new THREE.AmbientLight(0xffffff, 1.8));
     const sun = new THREE.DirectionalLight(0xffffff, 1);
     sun.position.set(-120, 260, 160);
     scene.add(sun);
 
-    const camera = new THREE.PerspectiveCamera(34, 1, 1, 3000);
+    const camera = new THREE.PerspectiveCamera(34, 1, 1, 9000);
     camera.position.copy(OVERVIEW.position);
 
     // Surroundings: shore, headland, island and seabed, painted like a sea chart.
     const terrainCanvas = document.createElement('canvas');
-    terrainCanvas.width = 1200;
-    terrainCanvas.height = 900;
+    terrainCanvas.width = 2048;
+    terrainCanvas.height = 1664;
 
+    paintTerrain(terrainCanvas, env); // painted here, so the scene never shows an unpainted (black) terrain
     const terrainTexture = new THREE.CanvasTexture(terrainCanvas);
     terrainTexture.colorSpace = THREE.SRGBColorSpace;
     terrainTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-    const terrainGeometry = new THREE.PlaneGeometry(TERRAIN.width, TERRAIN.depth, 240, 180);
+    const terrainGeometry = new THREE.PlaneGeometry(TERRAIN.width, TERRAIN.depth, 320, 260);
     const tp = terrainGeometry.getAttribute('position') as THREE.BufferAttribute;
     for (let i = 0; i < tp.count; i++) tp.setZ(i, heightAt(tp.getX(i), -tp.getY(i)));
     terrainGeometry.computeVertexNormals();
@@ -110,29 +108,17 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
     // A faint water surface over the underwater terrain; land rises through it.
     const surface = new THREE.Mesh(
       new THREE.PlaneGeometry(TERRAIN.width, TERRAIN.depth),
-      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.25, depthWrite: false }),
+      new THREE.MeshBasicMaterial({ color: env.shallow, transparent: true, opacity: env.surfaceOpacity, depthWrite: false }),
     );
     surface.rotation.x = -Math.PI / 2;
     scene.add(surface);
 
-    // Risk halos on the water around pens at elevated risk or worse.
-    const haloCanvas = document.createElement('canvas');
-    haloCanvas.width = 128;
-    haloCanvas.height = 128;
-    const hc = haloCanvas.getContext('2d');
-    if (hc) {
-      const g = hc.createRadialGradient(64, 64, 0, 64, 64, 64);
-      g.addColorStop(0, 'rgba(255,255,255,1)');
-      g.addColorStop(0.45, 'rgba(255,255,255,0.75)');
-      g.addColorStop(1, 'rgba(255,255,255,0)');
-      hc.fillStyle = g;
-      hc.fillRect(0, 0, 128, 128);
-    }
-    const haloTexture = new THREE.CanvasTexture(haloCanvas);
+    // Risk markers: a thin ring floating just above the collar of pens at elevated risk or worse.
+    // A marker rather than a tint on the water, which read like blood.
     const halos = world.pens.map((_, i) => {
-      const m = new THREE.Mesh(new THREE.CircleGeometry(R + 34, 48), new THREE.MeshBasicMaterial({ map: haloTexture, transparent: true, depthWrite: false }));
-      m.rotation.x = -Math.PI / 2;
-      m.position.copy(penPosition(world, i)).setY(0.4);
+      const m = new THREE.Mesh(new THREE.TorusGeometry(R + 7, 0.55, 8, 96), new THREE.MeshBasicMaterial({ transparent: true }));
+      m.rotation.x = Math.PI / 2;
+      m.position.copy(penPosition(world, i)).setY(2.2);
       m.visible = false;
       scene.add(m);
       return m;
@@ -159,7 +145,7 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
       net.userData.penIndex = i;
       scene.add(net);
       nets.push(net);
-      const collar = new THREE.Mesh(new THREE.TorusGeometry(R + 1.5, 0.9, 8, 72), new THREE.MeshLambertMaterial({ color: color.coast }));
+      const collar = new THREE.Mesh(new THREE.TorusGeometry(R + 1.5, 0.9, 8, 72), new THREE.MeshLambertMaterial({ color: env.collar }));
       collar.rotation.x = Math.PI / 2;
       collar.position.copy(pos).setY(0.6);
       scene.add(collar);
@@ -189,7 +175,7 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
     const seeds = Array.from({ length: streakCount }, (_, k) => [((k * 97) % 1000) / 1000, ((k * 389) % 1000) / 1000]);
     const streaks = new THREE.LineSegments(
       new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(streakCount * 6), 3)),
-      new THREE.LineBasicMaterial({ transparent: true, opacity: 0.45, depthWrite: false }),
+      new THREE.LineBasicMaterial({ color: env.current, transparent: true, opacity: 0.45, depthWrite: false }),
     );
     scene.add(streaks);
 
@@ -197,7 +183,7 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
     controls.target.copy(OVERVIEW.target);
     controls.maxPolarAngle = Math.PI * 0.49;
     controls.minDistance = 120;
-    controls.maxDistance = 1100;
+    controls.maxDistance = 2200;
     controls.update();
 
     const placeLabels = (): void => {
@@ -237,7 +223,9 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
         const angle = base + 14 * Math.sin(t / 3 + k);
         const local = netPoint(Math.min(d.depth, WALL_DEPTH_M), angle, 0.8);
         m.position.copy(centre).add(local);
-        m.rotation.y = -(angle * Math.PI) / 180; // along the net as it sweeps
+        // Face along the net (tangent to the pen), the way it sweeps.
+        const a = (angle * Math.PI) / 180;
+        m.lookAt(m.position.x + Math.cos(a), m.position.y, m.position.z + Math.sin(a));
       });
       const today = dayRef.current;
       const a = (world.env.currentDir[today] * Math.PI) / 180;
@@ -307,18 +295,7 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
     el.addEventListener('pointerup', onUp);
     el.addEventListener('pointermove', onMove);
 
-    const setEnvironment = (e: Environment): void => {
-      paintTerrain(terrainCanvas, e);
-      terrainTexture.needsUpdate = true;
-      (scene.fog as THREE.Fog).color.set(e.haze);
-      surface.material.color.set(e.shallow);
-      surface.material.opacity = e.surfaceOpacity;
-      streaks.material.color.set(e.current);
-      wrap.style.background = e.haze;
-      render();
-    };
-
-    ctx.current = { render, textures, collars, droneGroup, halos, animate, camera, controls, setEnvironment };
+    ctx.current = { render, textures, collars, droneGroup, halos, animate, camera, controls };
     resize();
 
     return () => {
@@ -328,6 +305,7 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
       el.removeEventListener('pointerup', onUp);
       el.removeEventListener('pointermove', onMove);
       scene.traverse((o) => {
+        if (o.userData.shared) return; // the shared robot model stays loaded for the next view
         if (o instanceof THREE.Mesh || o instanceof THREE.Line || o instanceof THREE.Points) {
           if (!o.userData.sharedGeometry) o.geometry.dispose();
           const m = o.material as THREE.Material | THREE.Material[];
@@ -336,7 +314,6 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
       });
       textures.forEach((t) => t.texture.dispose());
       terrainTexture.dispose();
-      haloTexture.dispose();
       renderer.dispose();
       el.remove();
       ctx.current = null;
@@ -363,19 +340,15 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
     c.animate(timeRef.current);
   }, [world, day, open]);
 
-  useEffect(() => {
-    ctx.current?.setEnvironment(env);
-  }, [env]);
-
-  // Halos tinted by each pen's worst risk; calm pens get none.
+  // Rings coloured by each pen's worst risk; calm pens get none.
   useEffect(() => {
     const c = ctx.current;
     if (!c) return;
     c.halos.forEach((m, i) => {
       const r = penRisk[i] ?? 0;
       m.visible = r >= 0.25;
-      m.material.color.set(riskColor(r));
-      m.material.opacity = Math.min(0.85, 0.25 + r * 0.6);
+      m.material.color.set(riskColor(Math.max(r, 0.35)));
+      m.material.opacity = r >= 0.5 ? 0.95 : 0.7;
     });
     c.animate(timeRef.current);
   }, [penRisk]);
@@ -384,7 +357,7 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
   useEffect(() => {
     const c = ctx.current;
     if (!c) return;
-    c.collars.forEach((m, i) => m.material.color.set(i === hoverPen ? color.signal : color.coast));
+    c.collars.forEach((m, i) => m.material.color.set(i === hoverPen ? env.collarHover : env.collar));
     c.render();
   }, [hoverPen]);
 
@@ -393,23 +366,34 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
     const c = ctx.current;
     if (!c) return;
     let alive = true;
-    c.droneGroup.children.forEach((m) => {
-      if (m instanceof THREE.Mesh) (m.material as THREE.Material).dispose();
-    });
+    c.droneGroup.children.forEach((g) =>
+      g.traverse((o) => {
+        if (o instanceof THREE.Mesh && !o.userData.shared) (o.material as THREE.Material).dispose();
+      }),
+    );
     c.droneGroup.clear();
     for (const d of drones) {
-      const m = new THREE.Mesh(placeholderGeometry, new THREE.MeshLambertMaterial({ color: d.penIndex === null ? color.ink3 : ROBOT_COLOR }));
-      m.userData.sharedGeometry = true;
-      m.scale.setScalar(8);
-      m.userData.droneId = d.id;
-      c.droneGroup.add(m);
+      const g = new THREE.Group();
+      g.userData.droneId = d.id;
+      const box = new THREE.Mesh(placeholderGeometry, new THREE.MeshLambertMaterial({ color: ROBOT_COLOR }));
+      box.userData.sharedGeometry = true;
+      box.userData.droneId = d.id;
+      box.scale.setScalar(8);
+      g.add(box);
+      c.droneGroup.add(g);
     }
     c.animate(timeRef.current);
-    robotGeometry().then(
-      (geometry) => {
+    robotTemplate().then(
+      (template) => {
         if (!alive) return;
-        c.droneGroup.children.forEach((m) => {
-          if (m instanceof THREE.Mesh) m.geometry = geometry;
+        c.droneGroup.children.forEach((g) => {
+          const old = g.children[0] as THREE.Mesh;
+          (old.material as THREE.Material).dispose();
+          g.clear();
+          const model = template.clone();
+          model.scale.multiplyScalar(8);
+          model.traverse((o) => (o.userData.droneId = g.userData.droneId));
+          g.add(model);
         });
         c.render();
       },
@@ -470,12 +454,18 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
         </div>
       </div>
       <div ref={labelsRef} className="scene-labels">
-        {world.pens.map((p) => {
+        {world.pens.map((p, i) => {
           const holes = open.filter((f) => f.penId === p.id && f.kind === 'hole').length;
+          const r = penRisk[i] ?? 0;
+          const flagged = holes > 0 || r >= 0.25;
           return (
-            <span key={p.id} className={`scene-label site-label${holes ? ' hole' : ''}`}>
+            <span
+              key={p.id}
+              className={`scene-label site-label${holes ? ' hole' : ''}`}
+              style={flagged && !holes ? { borderColor: riskColor(Math.max(r, 0.35)) } : undefined}
+            >
               {p.id}
-              {holes ? ', hole' : ''}
+              {holes ? ', hole' : r >= 0.25 ? `, risk ${Math.round(r * 100)}` : ''}
             </span>
           );
         })}

@@ -25,7 +25,7 @@ import {
 import type { Drone } from '../data/swarm';
 import { NET_OPACITY, environment } from '../lib/environment';
 import { paintNetTexture } from '../lib/heat';
-import { ROBOT_COLOR, placeholderGeometry, robotGeometry } from '../lib/robotModel';
+import { ROBOT_COLOR, placeholderGeometry, robotTemplate } from '../lib/robotModel';
 import { buildNetGeometry, netPoint, radiusAt } from '../lib/netGeometry';
 import type { LayerDef, LayerGrid } from '../lib/layers';
 import { color } from '../lib/tokens';
@@ -71,7 +71,7 @@ function cellCentre(cell: number, scale = 1.02): THREE.Vector3 {
 }
 
 function buildRigging(scene: THREE.Scene): void {
-  const steel = new THREE.MeshLambertMaterial({ color: color.coast });
+  const steel = new THREE.MeshLambertMaterial({ color: environment.collar }); // HDPE floating collar
   for (const radius of [R + 0.6, R + 2.0]) {
     const torus = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.45, 8, 96), steel);
     torus.rotation.x = Math.PI / 2;
@@ -228,7 +228,7 @@ export default function Pen3D({
 
     // Fjord surroundings: a sandy seabed fading into the haze, and a light water surface.
     scene.fog = new THREE.Fog(environment.haze, 160, 420);
-    const seabed = new THREE.Mesh(new THREE.CircleGeometry(260, 64), new THREE.MeshLambertMaterial({ color: environment.landLow }));
+    const seabed = new THREE.Mesh(new THREE.CircleGeometry(260, 64), new THREE.MeshLambertMaterial({ color: environment.sand }));
     seabed.rotation.x = -Math.PI / 2;
     seabed.position.y = -46;
     scene.add(seabed);
@@ -445,6 +445,7 @@ export default function Pen3D({
       el.removeEventListener('pointermove', onMove);
       el.removeEventListener('pointerleave', onLeave);
       scene.traverse((o) => {
+        if (o.userData.shared) return; // the shared robot model stays loaded for the next view
         if (o instanceof THREE.Mesh || o instanceof THREE.Line || o instanceof THREE.Points) {
           if (!o.userData.sharedGeometry) o.geometry.dispose();
           const m = o.material as THREE.Material | THREE.Material[];
@@ -556,7 +557,7 @@ export default function Pen3D({
     let alive = true;
     c.droneGroup.children.forEach((g) =>
       g.traverse((o) => {
-        if (o instanceof THREE.Mesh) {
+        if (o instanceof THREE.Mesh && !o.userData.shared) {
           if (!o.userData.sharedGeometry) o.geometry.dispose();
           (o.material as THREE.Material).dispose();
         }
@@ -570,7 +571,6 @@ export default function Pen3D({
       const body = new THREE.Mesh(placeholderGeometry, new THREE.MeshLambertMaterial({ color: ROBOT_COLOR }));
       body.userData.sharedGeometry = true;
       body.scale.setScalar(4.5);
-      body.rotation.y = Math.PI; // the model faces −z; lookAt points +z along the sweep
       g.add(body);
       bodies.push(body);
       if (d.id === selectedDrone) {
@@ -581,10 +581,16 @@ export default function Pen3D({
       c.droneGroup.add(g);
     }
     c.animate(timeRef.current);
-    robotGeometry().then(
-      (geometry) => {
+    robotTemplate().then(
+      (template) => {
         if (!alive) return;
-        bodies.forEach((b) => (b.geometry = geometry));
+        bodies.forEach((b) => {
+          const model = template.clone();
+          model.scale.multiplyScalar(4.5);
+          b.parent?.add(model);
+          b.removeFromParent();
+          (b.material as THREE.Material).dispose();
+        });
         c.render();
       },
       (err) => console.warn('BlueROV2 model failed to load; showing placeholder boxes', err),

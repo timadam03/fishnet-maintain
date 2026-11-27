@@ -1,8 +1,9 @@
 # Third-party models
 
-`bluerov2.stl` is a simplified version of `bluerov2_description/meshes/bluerov2_noprop.stl` from
+`bluerov2.glb` is derived from `bluerov2_description/meshes/bluerov2_noprop.dae` in
 [UUVControl/bluerov2](https://github.com/UUVControl/bluerov2), licensed under the Apache License 2.0
 (see `LICENSE-bluerov2`).
 
-Changes: reduced from about 308,000 to 6,689 triangles with quadric decimation and re-centred on
-its bounding box, for use as a lightweight web model.
+Changes: the 202 parts were merged by material colour into 15 groups, each group was simplified
+with quadric decimation (about 308,000 triangles reduced to about 28,000 in total), the model was
+re-centred, and it was exported as glTF binary for the web.
