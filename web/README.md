@@ -26,11 +26,14 @@ All data is **synthetic** (a seeded simulation), and the top bar says "Demo data
   - The palette is "paper and ink", almost monochrome: colour appears only where hole risk is high
     (coral to deep red), so danger stands out.
   - Other layers use quiet grey, slate and sage ramps.
-- **The swarm.** 20 drones work inside the nets, two to four per pen, sweeping along the netting (moving
-  in live mode). Every pen keeps a crew, and spare drones go to the pens with the most urgent areas
-  (risk × days since last seen). Teammates never take neighbouring areas, and open findings keep a drone
-  on them. Click a drone for its view, task, reason, battery, depth, health and queue. Drone D21 is
-  docked for repair, which is why Pen 8's cone goes stale. Logic: `src/data/swarm.ts`.
+- **The swarm.** 20 drones work inside the nets, two to four per pen (moving in live mode). Every pen
+  keeps a crew, and spare drones go to the pens with the most urgent areas. Drones follow the decision
+  layer's plan rules (`docs/contracts.md`): they sweep for coverage 4 m off the net, stalest and
+  riskiest areas first, and switch to a targeted look where one is needed: two drones from either side
+  for a likely opening (P1), closer for an unsure detection (P2), two angles through heavy fouling
+  (P4), closer for wear (P5) or high risk (P6). A confirmed hole leaves the plan; it needs the repair
+  crew. Click a drone for its view, rule, distance off the net, partner, battery, health and queue.
+  Drone D21 is docked for repair, which is why Pen 8's cone goes stale. Logic: `src/data/swarm.ts`.
 - **Current.** In the pen view, faint streamlines bend around the pen, and particles drift along
   them at the day's current speed.
 - **Feed barge, swarm dock.** Drones docked for repair or charging rest in cradles on the barge's
@@ -59,9 +62,18 @@ All data is **synthetic** (a seeded simulation), and the top bar says "Demo data
 - **Today, Pen 7 (`#pen=7`):** the old net has sagged onto the sinker tube since 18 Nov. Risk is high
   at 17.5–20 m, 300–315°, a fresh detection is waiting for review, and the storm forecast for 1 Dec
   (`#day=93`) raises it further.
+- **Today, Pen 1 (`#pen=1`):** a small opening at 12.5–15 m, confirmed and sent to the crew. Also a
+  heavy fouling patch near the surface and a thin spot at 15–17.5 m.
+- **Today, Pen 6 (`#pen=6`):** a likely opening (76 %) seen once; two drones confirm it from either side (P1).
+- **Today, Pen 5 (`#pen=5`):** an unsure possible opening (55 %) gets a closer look (P2), next to a thin spot.
+- **Today, fouling and thin spots:** fouling patches the cleaner misses in Pens 1, 2, 4, 6 and 8 (Fouling
+  layer), thin twine in Pens 1, 3, 5 and 8 (Condition and Hole risk layers).
 - **History, Pen 4 (`#pen=4&cell=105&day=51`):** chafe from a weight rope was flagged at high risk and
   fixed before a twine broke.
 - **History, Pen 3 (`#pen=3&day=70&layer=oxygen`):** crowding for delousing dropped oxygen across the pen.
+
+The problem areas of today are scripted in `SEEDS` in `src/data/simulate.ts`. How the dashboard will
+show the real pipeline (Isaac run, image pipeline, decision layer) is planned in [`INTEGRATION.md`](INTEGRATION.md).
 
 The model is in `src/data/risk.ts` and follows the preventive net-damage concept. Its weights are
 examples and have not been calibrated against real farms.

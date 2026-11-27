@@ -95,7 +95,7 @@ export function RobotView({ world, day, drone, onClose }: RobotViewProps) {
     pen && drone.cell !== null
       ? world.findings.find((f) => f.penId === pen.id && f.cell === drone.cell && f.detectedDay <= day && !f.steps.some((s) => s.day <= day && (s.status === 'verified' || s.status === 'rejected')))
       : undefined;
-  const detection = finding ? `${finding.kind === 'hole' ? 'Hole' : 'Wear'} #${finding.id}, ${Math.round(finding.confidence * 100)}%` : risk && risk.score >= 0.5 ? 'Worn twine?' : null;
+  const detection = finding ? `${finding.kind === 'hole' ? 'Opening' : 'Wear'} #${finding.id}, ${Math.round(finding.confidence * 100)}%` : risk && risk.score >= 0.5 ? 'Worn twine?' : null;
   useFakeFeed(ref, day === TODAY && pen !== null, detection);
 
   return (
@@ -124,6 +124,20 @@ export function RobotView({ world, day, drone, onClose }: RobotViewProps) {
           {drone.reason}
         </p>
         <dl className="facts robot-facts">
+          {pen && (
+            <>
+              <dt>Plan rule</dt>
+              <dd>{drone.rule === 'sweep' ? 'Coverage sweep' : `${drone.rule}, targeted look`}</dd>
+              <dt>Off the net</dt>
+              <dd>{drone.standoffM} m</dd>
+            </>
+          )}
+          {drone.partner && (
+            <>
+              <dt>With</dt>
+              <dd>Drone {drone.partner}, other side</dd>
+            </>
+          )}
           <dt>Battery</dt>
           <dd>{drone.battery}%</dd>
           <dt>Hole risk here</dt>

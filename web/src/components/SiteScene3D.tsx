@@ -20,7 +20,8 @@ interface Props {
   world: World;
   day: number;
   live: boolean;
-  open: Finding[];
+  /** Confirmed open holes, drawn on the nets and pinned with "!". */
+  holes: Finding[];
   drones: Drone[];
   /** The pen the user opened: the camera flies down into it, then the pen view takes over. */
   focusPen: number | null;
@@ -56,7 +57,7 @@ interface SceneCtx {
   controls: OrbitControls;
 }
 
-export default function SiteScene3D({ world, day, live, open, drones, focusPen, penRisk, onOpenPen, onSelectDrone }: Props) {
+export default function SiteScene3D({ world, day, live, holes, drones, focusPen, penRisk, onOpenPen, onSelectDrone }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const labelsRef = useRef<HTMLDivElement>(null);
   const ctx = useRef<SceneCtx | null>(null);
@@ -233,9 +234,10 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
         }
         // Inside the net, sweeping either side of its area.
         const centre = penPosition(world, d.penIndex);
-        const base = d.cell === null ? 0 : (d.cell % 24) * 15 + 7.5;
-        const angle = base + 14 * Math.sin(t / 3 + k);
-        const local = netPoint(Math.min(d.depth, WALL_DEPTH_M), angle, 0.8);
+        const base = (d.cell === null ? 0 : (d.cell % 24) * 15 + 7.5) + d.viewDeg;
+        const angle = base + (d.rule === 'sweep' ? 14 * Math.sin(t / 3 + k) : 1.5 * Math.sin(t / 2 + k));
+        // Site scale: drones are drawn 8× life size, so keep them a little further off the net.
+        const local = netPoint(Math.min(d.depth, WALL_DEPTH_M), angle, Math.min(0.85, 1 - d.standoffM / R));
         m.position.copy(centre).add(local);
         // Face along the net (tangent to the pen), the way it sweeps.
         const a = (angle * Math.PI) / 180;
@@ -330,12 +332,12 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
         canvas,
         grid,
         layer,
-        open.filter((f) => f.penId === world.pens[i].id && f.kind === 'hole'),
+        holes.filter((f) => f.penId === world.pens[i].id),
       );
       texture.needsUpdate = true;
     });
     c.animate(timeRef.current);
-  }, [world, day, open]);
+  }, [world, day, holes]);
 
 
   // Highlight the hovered pen's collar.
@@ -416,10 +418,10 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
       </div>
       <div ref={labelsRef} className="scene-labels">
         {world.pens.map((p, i) => {
-          const holes = open.filter((f) => f.penId === p.id && f.kind === 'hole').length;
+          const penHoles = holes.filter((f) => f.penId === p.id).length;
           const r = penRisk[i] ?? 0;
-          const kind = holes ? 'hole' : r >= 0.5 ? 'high' : null;
-          const title = holes ? `${p.name}: hole open` : kind ? `${p.name}: high hole risk (${Math.round(r * 100)})` : p.name;
+          const kind = penHoles ? 'hole' : r >= 0.5 ? 'high' : null;
+          const title = penHoles ? `${p.name}: hole open` : kind ? `${p.name}: high hole risk (${Math.round(r * 100)})` : p.name;
           return (
             <span key={p.id} className="site-marker" title={title}>
               {kind && (

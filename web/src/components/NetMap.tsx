@@ -20,6 +20,8 @@ interface Props {
   layer: LayerDef;
   selectedCell: number | null;
   findings: Finding[];
+  /** Ids of confirmed holes; other hole findings are possible openings, drawn like wear. */
+  holeIds: ReadonlySet<number>;
   /** Angle the current comes from (the most loaded side). */
   upstreamAngle: number;
   boatSideAngle: number;
@@ -109,7 +111,7 @@ function blit(ctx: CanvasRenderingContext2D, img: ImageData, x: number, y: numbe
  * The net "unrolled": angle around the pen across, depth down, bottom cone as a disc below.
  * Values are drawn as a smooth heat surface over a faint net mesh.
  */
-export function NetMap({ grid, layer, selectedCell, findings, upstreamAngle, boatSideAngle, onSelect }: Props) {
+export function NetMap({ grid, layer, selectedCell, findings, holeIds, upstreamAngle, boatSideAngle, onSelect }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 600, h: 500 });
@@ -246,7 +248,7 @@ export function NetMap({ grid, layer, selectedCell, findings, upstreamAngle, boa
     const cellSize = Math.min(l.gw / ANGLE_SECTORS, l.gh / WALL_ROWS);
     for (const f of findings) {
       const [x, y] = cellCentre(l, f.cell);
-      if (f.kind === 'hole') {
+      if (holeIds.has(f.id)) {
         drawHole(ctx, x, y, Math.max(6, cellSize * 0.35));
         ctx.beginPath();
         ctx.arc(x, y, Math.max(12, cellSize * 0.75), 0, Math.PI * 2);
@@ -272,7 +274,7 @@ export function NetMap({ grid, layer, selectedCell, findings, upstreamAngle, boa
       ctx.lineWidth = 2;
       ctx.stroke();
     }
-  }, [grid, layer, selectedCell, findings, size, layout, upstreamAngle, boatSideAngle, fontsReady]);
+  }, [grid, layer, selectedCell, findings, holeIds, size, layout, upstreamAngle, boatSideAngle, fontsReady]);
 
   const pos = (e: MouseEvent<HTMLCanvasElement>): [number, number] => {
     const rect = e.currentTarget.getBoundingClientRect();

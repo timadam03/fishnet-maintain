@@ -35,6 +35,8 @@ interface Props {
   layer: LayerDef;
   selectedCell: number | null;
   findings: Finding[];
+  /** Ids of confirmed holes; other hole findings are possible openings, drawn like wear. */
+  holeIds: ReadonlySet<number>;
   /** Direction the current flows towards, degrees, and its speed in cm/s. */
   currentDir: number;
   currentSpeed: number;
@@ -147,14 +149,17 @@ function flowPaths(dirDeg: number): THREE.Vector3[][] {
 
 const PARTICLES_PER_PATH = 4;
 
-/** A drone's position: just outside the net at its task depth, sweeping a little either side of its area. */
+/**
+ * A drone's position: inside the net at its task depth and standoff. Sweeping drones move along
+ * either side of their area; targeted ones hold at their viewpoint, and a two-angle look (P4) swings
+ * between its two angles.
+ */
 function dronePosition(d: Drone, t: number, k: number): THREE.Vector3 {
   if (d.cell === null) return new THREE.Vector3(0, 2, -(R + 30));
-  const base = cellCol(d.cell) * SECTOR_DEG + SECTOR_DEG / 2;
-  const sweep = d.status === 'sampling' ? 40 * Math.sin(t / 9 + k) : 9 * Math.sin(t / 3 + k);
+  const base = cellCol(d.cell) * SECTOR_DEG + SECTOR_DEG / 2 + d.viewDeg;
+  const sweep = d.status === 'sampling' ? 40 * Math.sin(t / 9 + k) : d.rule === 'sweep' ? 9 * Math.sin(t / 3 + k) : d.rule === 'P4' ? 8 * Math.sin(t / 4 + k) : 1.2 * Math.sin(t / 2 + k);
   const depth = d.depth + (d.status === 'sampling' ? 3 * Math.sin(t / 5 + k) : 0);
-  // Drones work inside the net, a few metres off the netting.
-  return netPoint(Math.min(depth, WALL_DEPTH_M), base + sweep, 0.88);
+  return netPoint(Math.min(depth, WALL_DEPTH_M), base + sweep, 1 - Math.max(1, d.standoffM) / R);
 }
 
 export default function Pen3D({
@@ -162,6 +167,7 @@ export default function Pen3D({
   layer,
   selectedCell,
   findings,
+  holeIds,
   currentDir,
   currentSpeed,
   drones,
@@ -469,11 +475,11 @@ export default function Pen3D({
       c.textureCanvas,
       grid,
       layer,
-      findings.filter((f) => f.kind === 'hole'),
+      findings.filter((f) => holeIds.has(f.id)),
     );
     c.texture.needsUpdate = true;
     c.render();
-  }, [grid, layer, findings]);
+  }, [grid, layer, findings, holeIds]);
 
   // Selection outline.
   useEffect(() => {
@@ -499,12 +505,12 @@ export default function Pen3D({
     });
     c.markers.clear();
     for (const f of findings) {
-      const m = new THREE.Mesh(new THREE.SphereGeometry(f.kind === 'hole' ? 1.1 : 0.8, 14, 14), new THREE.MeshBasicMaterial({ color: f.kind === 'hole' ? color.riskCritical : color.ink }));
+      const m = new THREE.Mesh(new THREE.SphereGeometry(holeIds.has(f.id) ? 1.1 : 0.8, 14, 14), new THREE.MeshBasicMaterial({ color: holeIds.has(f.id) ? color.riskCritical : color.ink }));
       m.position.copy(cellCentre(f.cell, 1.03));
       c.markers.add(m);
     }
     c.render();
-  }, [findings]);
+  }, [findings, holeIds]);
 
   // Horizontal water slice at the chosen depth.
   useEffect(() => {
@@ -605,7 +611,7 @@ export default function Pen3D({
     <div ref={wrapRef} style={{ position: 'absolute', inset: 0 }}>
       <div ref={labelsRef} className="scene-labels">
         {findings.map((f) => (
-          <button key={f.id} className={`scene-label${f.kind === 'hole' ? ' hole' : ''}`} onClick={() => onSelectFinding(f)}>
+          <button key={f.id} className={`scene-label${holeIds.has(f.id) ? ' hole' : ''}`} onClick={() => onSelectFinding(f)}>
             <span className="pin" aria-hidden="true" />
             {labelFor(f)}
           </button>

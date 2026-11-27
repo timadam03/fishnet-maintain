@@ -18,7 +18,7 @@ import { RISK_LEVELS, explainRisk, riskLevel, type RiskLevel } from '../data/ris
 import { CONE_DRONE_DOCKED_DAY } from '../data/simulate';
 import { FROZEN_SENSOR, sensorProfile } from '../data/water';
 import { riskColor } from '../lib/layers';
-import { statusAt, type Action, type Review } from '../lib/state';
+import { isConfirmedHole, statusAt, type Action, type Review } from '../lib/state';
 import { riskShareSeries, topRiskAreas, type PenSummary, type RiskArea, type RiskShare } from '../lib/summary';
 import { color } from '../lib/tokens';
 import { DepthProfile } from './DepthProfile';
@@ -84,6 +84,9 @@ const KIND_LABEL: Record<Finding['kind'], string> = {
   distortion: 'Mesh distortion',
 };
 
+/** A hole finding nobody has confirmed yet is a possible opening, not a hole. */
+const kindLabel = (f: Finding, status: FindingStatus): string => (f.kind === 'hole' && status === 'unreviewed' ? 'Possible opening' : KIND_LABEL[f.kind]);
+
 const STATUS_LABEL: Record<FindingStatus, string> = {
   unreviewed: 'Needs review',
   confirmed: 'Confirmed',
@@ -112,7 +115,7 @@ interface Alert {
 export function SitePanel({ world, day, summaries, open, stormPeak, siteShare, reviews, dispatch }: SiteProps) {
   const top = useMemo(() => topRiskAreas(summaries, 5), [summaries]);
   const seen = summaries.reduce((a, s) => a + s.seenWeekPct, 0) / summaries.length;
-  const holes = open.filter((f) => f.kind === 'hole');
+  const holes = open.filter((f) => isConfirmedHole(f, day, reviews));
   const unreviewed = open.filter((f) => statusAt(f, day, reviews) === 'unreviewed');
   const penIndexOf = (penId: number): number => world.pens.findIndex((p) => p.id === penId);
 
@@ -130,7 +133,7 @@ export function SitePanel({ world, day, summaries, open, stormPeak, siteShare, r
     alerts.push({
       severity: 'warning',
       title: unreviewed.length === 1 ? `New detection to review in ${world.pens[penIndexOf(f.penId)].name}` : `${unreviewed.length} new detections to review`,
-      meta: unreviewed.map((x) => `${KIND_LABEL[x.kind]} (#${x.id})`).join(', '),
+      meta: unreviewed.map((x) => `${kindLabel(x, 'unreviewed')} (#${x.id})`).join(', '),
       onClick: () => dispatch({ type: 'finding', penIndex: penIndexOf(f.penId), cell: f.cell, findingId: f.id }),
     });
   }
@@ -345,7 +348,7 @@ function FindingList({ world, findings, day, reviews, dispatch }: CommonProps & 
             <StatusIcon severity={closed ? 'info' : f.severity} />
             <span className="body">
               <span className="title" style={{ display: 'block' }}>
-                {KIND_LABEL[f.kind]} <span style={{ color: color.ink3, fontWeight: 400 }}>#{f.id}</span>
+                {kindLabel(f, status)} <span style={{ color: color.ink3, fontWeight: 400 }}>#{f.id}</span>
               </span>
               <span className="meta">
                 {dayLabel(f.detectedDay)}, {cellLabel(f.cell)}. {STATUS_LABEL[status]}.
@@ -471,7 +474,7 @@ export function FindingPanel({ world, day, finding: f, reviews, dispatch }: Find
     <>
       <section className="section">
         <h2>
-          {KIND_LABEL[f.kind]} <span style={{ color: color.ink3, fontWeight: 400 }}>#{f.id}</span>
+          {kindLabel(f, status)} <span style={{ color: color.ink3, fontWeight: 400 }}>#{f.id}</span>
         </h2>
         <p className="lede">
           {pen?.name}, {cellLabel(f.cell)}, {f.side} face. Found {dayLabel(f.detectedDay)} with {Math.round(f.confidence * 100)}% confidence.

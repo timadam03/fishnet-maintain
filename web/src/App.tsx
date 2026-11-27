@@ -9,7 +9,7 @@ import { PenView } from './components/PenView';
 import { RobotView } from './components/RobotView';
 import { TimeBar } from './components/TimeBar';
 import { layerById } from './lib/layers';
-import { fromHash, initialState, openFindings, reducer, statusAt, toHash } from './lib/state';
+import { fromHash, initialState, isConfirmedHole, openFindings, reducer, statusAt, toHash } from './lib/state';
 import { riskShareSeries, summarisePen, topRiskAreas } from './lib/summary';
 import { color } from './lib/tokens';
 
@@ -29,9 +29,12 @@ export default function App() {
   const { penIndex, cell, findingId, day, layer, playing, reviews } = state;
   const summaries = useMemo(() => world.pens.map((_, i) => summarisePen(world, i, day)), [day]);
   const open = useMemo(() => openFindings(world, day, reviews), [day, reviews]);
+  const holes = useMemo(() => open.filter((f) => isConfirmedHole(f, day, reviews)), [open, day, reviews]);
   const pen = penIndex === null ? null : world.pens[penIndex];
   const finding = findingId === null ? null : (world.findings.find((f) => f.id === findingId) ?? null);
-  const drones = useMemo(() => swarmState(world, day, open), [day, open]);
+  // Detections nobody has reviewed yet get a targeted second look from the swarm.
+  const unreviewed = useMemo(() => open.filter((f) => statusAt(f, day, reviews) === 'unreviewed'), [open, day, reviews]);
+  const drones = useMemo(() => swarmState(world, day, unreviewed), [day, unreviewed]);
   const drone = state.droneId === null ? null : (drones.find((d) => d.id === state.droneId) ?? null);
   const penOpen = useMemo(() => (pen ? open.filter((f) => f.penId === pen.id) : []), [open, pen]);
 
@@ -118,7 +121,7 @@ export default function App() {
     <div className="app">
       <main className="stage" style={{ background: `linear-gradient(180deg, ${environment.sky} 0%, ${environment.haze} 55%)` }}>
         <Suspense fallback={<p className="stage-hint">Loading 3D site…</p>}>
-          <SiteScene3D world={world} day={day} live={day === TODAY} open={open} drones={drones} focusPen={penIndex} penRisk={penRisk} onOpenPen={openPen} onSelectDrone={selectDrone} />
+          <SiteScene3D world={world} day={day} live={day === TODAY} holes={holes} drones={drones} focusPen={penIndex} penRisk={penRisk} onOpenPen={openPen} onSelectDrone={selectDrone} />
         </Suspense>
         {pen && penIndex !== null && (
           <PenView

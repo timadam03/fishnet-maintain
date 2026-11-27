@@ -4,7 +4,7 @@ import { riskScore } from '../data/risk';
 import type { Drone } from '../data/swarm';
 import { waterAtPoint } from '../data/water';
 import { LAYERS, computeLayerGrid, fitLayer, layerById, type LayerDef } from '../lib/layers';
-import { statusAt, type Action, type PenViewMode, type Review } from '../lib/state';
+import { isConfirmedHole, statusAt, type Action, type PenViewMode, type Review } from '../lib/state';
 import { Legend } from './Legend';
 import { NetMap } from './NetMap';
 
@@ -76,11 +76,13 @@ export function PenView({ world, penIndex, day, layerId, cell, view, sliceDepth,
   const upstream = (currentDir + 180) % 360;
   const select = useCallback((c: number): void => dispatch({ type: 'cell', penIndex, cell: c }), [dispatch, penIndex]);
   const selectFinding = useCallback((f: Finding): void => dispatch({ type: 'finding', penIndex, cell: f.cell, findingId: f.id }), [dispatch, penIndex]);
+  const holeIds = useMemo(() => new Set(findings.filter((f) => isConfirmedHole(f, day, reviews)).map((f) => f.id)), [findings, day, reviews]);
   const labelFor = useCallback(
     (f: Finding): string => {
       const s = statusAt(f, day, reviews);
       const note = s === 'unreviewed' ? 'needs review' : s === 'work-order' ? 'repair ordered' : s === 'confirmed' ? 'confirmed' : s === 'repaired' ? 'repaired' : '';
-      return `${KIND[f.kind]} #${f.id}${note ? `, ${note}` : ''}`;
+      const kind = f.kind === 'hole' && s === 'unreviewed' ? 'Possible opening' : KIND[f.kind];
+      return `${kind} #${f.id}${note ? `, ${note}` : ''}`;
     },
     [day, reviews],
   );
@@ -139,6 +141,7 @@ export function PenView({ world, penIndex, day, layerId, cell, view, sliceDepth,
               layer={layer}
               selectedCell={cell}
               findings={findings}
+              holeIds={holeIds}
               currentDir={currentDir}
               currentSpeed={world.env.currentSpeed[day]}
               drones={penDrones}
@@ -154,7 +157,7 @@ export function PenView({ world, penIndex, day, layerId, cell, view, sliceDepth,
           </Suspense>
         ) : (
           <div className="unrolled">
-            <NetMap grid={grid} layer={layer} selectedCell={cell} findings={findings} upstreamAngle={upstream} boatSideAngle={pen.boatSideAngle} onSelect={select} />
+            <NetMap grid={grid} layer={layer} selectedCell={cell} findings={findings} holeIds={holeIds} upstreamAngle={upstream} boatSideAngle={pen.boatSideAngle} onSelect={select} />
           </div>
         )}
       </div>

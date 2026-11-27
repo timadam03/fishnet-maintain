@@ -44,6 +44,44 @@ const PEN4_RERIG_DAY = 35;
 export const CONE_DRONE_DOCKED_DAY = 70;
 const PEN7_SAG_CELL = cellIndex(WALL_ROWS - 1, 20);
 
+/**
+ * Scripted problem areas, so every case shows up somewhere on the site:
+ * - `fouling`: a patch where growth is faster and the cleaner misses part of it (a mooring rope or
+ *   a seam in the way). Heavy fouling adds drag and can hide damage.
+ * - `thin`: twine worn thin, just below the level where the vision model flags it. Only the risk
+ *   map shows it, which is the point of prevention.
+ * - `openings`: small openings in the mesh. `confirmed` ones are reviewed and sent to the service
+ *   crew; the others are "possible openings" seen once and waiting for a second look.
+ * Findings from these get ids after the regular ones (#209 on), so earlier finding ids stay fixed.
+ */
+interface Seeds {
+  fouling?: Array<{ row: number; col: number; size: number }>;
+  thin?: Array<{ row: number; col: number; fray: number }>;
+  openings?: Array<{ row: number; col: number; confidence: number; confirmed: boolean }>;
+}
+const SEEDS: Record<number, Seeds> = {
+  1: { fouling: [{ row: 2, col: 4, size: 2.2 }], thin: [{ row: 6, col: 15, fray: 0.46 }], openings: [{ row: 5, col: 9, confidence: 0.91, confirmed: true }] },
+  2: { fouling: [{ row: 5, col: 4, size: 1.6 }] },
+  3: { thin: [{ row: 4, col: 9, fray: 0.47 }] },
+  4: { fouling: [{ row: 1, col: 13, size: 1.8 }] },
+  5: { openings: [{ row: 3, col: 14, confidence: 0.55, confirmed: false }], thin: [{ row: 3, col: 12, fray: 0.44 }] },
+  6: { openings: [{ row: 5, col: 7, confidence: 0.76, confirmed: false }], fouling: [{ row: 2, col: 20, size: 2 }] },
+  8: { fouling: [{ row: 6, col: 10, size: 2.4 }], thin: [{ row: 2, col: 1, fray: 0.45 }, { row: 3, col: 1, fray: 0.42 }] },
+};
+/**
+ * Both start after the last regular finding (day 84), so the history before them is unchanged:
+ * thin spots wear in over the last four days, openings appear overnight and are found this morning.
+ */
+const THIN_FROM_DAY = TODAY - 4;
+const OPENING_DAY = TODAY;
+
+/** 0..1 weight of a cell inside a patch centred on (row, col), wrapping around the pen. */
+function patchWeight(c: number, row: number, col: number, size: number): number {
+  const dc = Math.min(Math.abs(cellCol(c) - col), ANGLE_SECTORS - Math.abs(cellCol(c) - col));
+  const dr = cellRow(c) - row;
+  return Math.exp(-(dc * dc + dr * dr * 1.6) / (size * size));
+}
+
 function makePens(): Pen[] {
   const base = [
     { age: 300, fish: 168_000, every: 12, passes: 1 },
@@ -150,8 +188,26 @@ interface Repair {
   weightFix: boolean;
 }
 
-function simulatePen(pen: Pen, env: SiteEnv, seed: number, findings: Finding[]): PenSim {
+function simulatePen(pen: Pen, env: SiteEnv, seed: number, findings: Finding[], seededFindings: Finding[]): PenSim {
   const sim = allocSim();
+  // Separate stream for the scripted problem areas, so they don't shift the regular findings.
+  const seedRng = mulberry32(seed * 733 + pen.id * 17);
+  const seeds = SEEDS[pen.id] ?? {};
+  const foulGrowth = new Float32Array(CELLS).fill(1);
+  const cleanerMiss = new Float32Array(CELLS);
+  const thinTarget = new Float32Array(CELLS);
+  for (let c = 0; c < CELLS; c++) {
+    for (const f of seeds.fouling ?? []) {
+      const w = patchWeight(c, f.row, f.col, f.size);
+      foulGrowth[c] += 2.5 * w;
+      cleanerMiss[c] = Math.max(cleanerMiss[c], w);
+    }
+    for (const t of seeds.thin ?? []) {
+      // The spot itself plus a weaker rim on its direct neighbours.
+      const w = cellRow(c) === t.row && cellCol(c) === t.col ? 1 : 0.8 * patchWeight(c, t.row, t.col, 1);
+      if (w >= 0.25) thinTarget[c] = Math.max(thinTarget[c], t.fray * w);
+    }
+  }
   const init = mulberry32(seed * 131 + pen.id);
   const insp = mulberry32(seed * 977 + pen.id * 7);
   const fp = mulberry32(seed * 409 + pen.id * 13);
@@ -197,23 +253,24 @@ function simulatePen(pen: Pen, env: SiteEnv, seed: number, findings: Finding[]):
     return sim.contactCum[hi] - sim.contactCum[lo];
   };
 
-  const addFinding = (day: number, c: number, kind: FindingKind, confidence: number, falseAlarm: boolean): void => {
+  const addFinding = (day: number, c: number, kind: FindingKind, confidence: number, falseAlarm: boolean, scripted?: { confirmed: boolean }): void => {
     const steps: FindingStep[] = [{ day, status: 'unreviewed', note: kind === 'hole' ? 'Hole flagged by vision model' : 'Wear sign flagged by vision model' }];
-    const severity = kind === 'hole' ? 'critical' : 'warning';
+    const severity = kind === 'hole' && (!scripted || scripted.confirmed) ? 'critical' : 'warning';
     const finding: Finding = {
       id: 0, // assigned in time order once all pens are simulated
       penId: pen.id,
       cell: c,
       kind,
-      side: fp() < 0.8 ? 'outside' : 'inside',
+      side: (scripted ? seedRng() : fp()) < 0.8 ? 'outside' : 'inside',
       detectedDay: day,
       openedDay: kind === 'hole' ? openedDayFor(c, day) : undefined,
       confidence,
       severity,
       steps,
     };
-    const idx = findings.push(finding) - 1;
-    openFinding[c] = idx;
+    openFinding[c] = (scripted ? seededFindings : findings).push(finding) - 1;
+    // A possible opening seen once waits for a second look before anyone acts on it.
+    if (scripted && !scripted.confirmed) return;
     // Holes are urgent: confirmed and sent to the service crew the same day.
     const urgent = kind === 'hole';
     // Other recent findings stay unreviewed so the operator can act on them in the demo.
@@ -298,11 +355,11 @@ function simulatePen(pen: Pen, env: SiteEnv, seed: number, findings: Finding[]):
       const col = cellCol(c);
       const face = facing(col, dir);
 
-      foul[c] += 0.022 * (temp / 10) * (1 - (0.75 * row) / ROWS) * (1 - foul[c]);
+      foul[c] += 0.022 * foulGrowth[c] * (temp / 10) * (1 - (0.75 * row) / ROWS) * (1 - foul[c]);
       let passes = 0;
       if (cleaningToday && row < WALL_ROWS) {
         passes = pen.passesPerCleaning + (face > 0.6 ? 1 : 0);
-        foul[c] *= 0.2;
+        foul[c] *= 0.2 + 0.7 * cleanerMiss[c];
       }
 
       const depthShelter = row < WALL_ROWS ? 1 - row * 0.04 : 0.6;
@@ -312,6 +369,15 @@ function simulatePen(pen: Pen, env: SiteEnv, seed: number, findings: Finding[]):
       coat[c] = Math.min(1, coat[c] + 0.015 * passes + 0.002 * contact);
       fray[c] = Math.min(1, fray[c] + 0.0085 * contact * contactWearFactor(pen.id, row, col) * (0.6 + coat[c]) + 0.004 * passes + 0.006 * Math.max(0, load - 1.3) + 0.0003);
       dist[c] = Math.min(1, Math.max(0, dist[c] + 0.012 * Math.max(0, load - 0.9) * (0.3 + fray[c]) - 0.0015));
+
+      if (thinTarget[c] > 0 && day >= THIN_FROM_DAY && day <= TODAY) {
+        // Thinning comes with worn coating and a slightly stretched mesh.
+        const k = (thinTarget[c] / 0.47) * Math.min(1, (day - THIN_FROM_DAY + 1) / (TODAY - THIN_FROM_DAY + 1));
+        fray[c] = Math.max(fray[c], 0.47 * k);
+        coat[c] = Math.max(coat[c], 0.7 * k);
+        dist[c] = Math.max(dist[c], 0.3 * k);
+        if (day === TODAY) lastSeen[c] = day; // this morning's sweep filmed it
+      }
 
       if (fray[c] >= 1 && !hole[c]) {
         hole[c] = 1;
@@ -338,6 +404,22 @@ function simulatePen(pen: Pen, env: SiteEnv, seed: number, findings: Finding[]):
       // A drone filming that side the same evening catches it.
       lastSeen[c] = day;
       addFinding(day, c, 'hole', 0.94, false);
+    }
+    if (day === OPENING_DAY) {
+      for (const o of seeds.openings ?? []) {
+        const c = cellIndex(o.row, o.col);
+        fray[c] = 1;
+        hole[c] = 1;
+        holeOpenedDay[c] = day;
+        sim.fray[base + c] = 1;
+      }
+    }
+    if (day === OPENING_DAY) {
+      for (const o of seeds.openings ?? []) {
+        const c = cellIndex(o.row, o.col);
+        lastSeen[c] = day;
+        addFinding(day, c, 'hole', o.confidence, false, { confirmed: o.confirmed });
+      }
     }
     for (let c = 0; c < CELLS; c++) sim.holeOpen[base + c] = hole[c];
 
@@ -425,8 +507,11 @@ export function generateWorld(seed = 7): World {
   const pens = makePens();
   const env = makeEnv(mulberry32(seed));
   const findings: Finding[] = [];
-  const sims = pens.map((pen) => simulatePen(pen, env, seed, findings));
-  findings.sort((a, b) => a.detectedDay - b.detectedDay || a.penId - b.penId || a.cell - b.cell);
+  const seeded: Finding[] = [];
+  const sims = pens.map((pen) => simulatePen(pen, env, seed, findings, seeded));
+  const order = (a: Finding, b: Finding): number => a.detectedDay - b.detectedDay || a.penId - b.penId || a.cell - b.cell;
+  findings.sort(order);
+  findings.push(...seeded.sort(order));
   findings.forEach((f, i) => (f.id = 201 + i));
   return { siteName: 'Site A', pens, env, operations: makeOperations(pens), sims, findings };
 }

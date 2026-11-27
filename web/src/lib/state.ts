@@ -135,6 +135,14 @@ export function statusAt(f: Finding, day: number, reviews: Record<number, Review
   return status;
 }
 
+/**
+ * A hole finding is treated as a hole (pin, urgent alert, drawn opening) once someone has confirmed
+ * it. Before that it is a possible opening that needs a second look.
+ */
+export function isConfirmedHole(f: Finding, day: number, reviews: Record<number, Review>): boolean {
+  return f.kind === 'hole' && statusAt(f, day, reviews) !== 'unreviewed';
+}
+
 export function isOpen(f: Finding, day: number, reviews: Record<number, Review>): boolean {
   return f.detectedDay <= day && !CLOSED.includes(statusAt(f, day, reviews));
 }
