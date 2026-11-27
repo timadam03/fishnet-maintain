@@ -18,6 +18,8 @@ Outputs:
 ```
 sim/fishfarm_demo.py          scene + water physics + HOCBF navigation + capture + recording
 sim/safe_nav.py               HOCBF filter (numpy), sonar-style rays, policy runner
+sim/plan_mode.py              decision-layer plan.json -> waypoints (numpy), for --plan
+tests/test_plan_mode.py       laptop tests for plan_mode.py (no Isaac Sim needed)
 tools/make_video.py           draws the overlays and encodes the MP4 videos
 training/train_fishfarm_nav.py  optional: retrain the PPO navigator (run in the SJTU repo)
 scripts/run_cluster.sh        one-command headless run on a GPU server
@@ -67,6 +69,38 @@ docker run --rm --gpus all -e ACCEPT_EULA=Y -e PRIVACY_CONSENT=Y \
   -v "$PWD":/abyss-sim -v "$HOME/abyss_out":/out --entrypoint bash nvcr.io/nvidia/isaac-sim:5.1.0 \
   -c "cd /abyss-sim && ISAACSIM_ROOT=/isaac-sim OUT=/out ./scripts/run_cluster.sh"
 ```
+
+## Acting on the decision layer (`--plan`)
+The first run is a sweep: the ROVs cover the whole net and write `captures.jsonl`. The decision
+layer (branch `feat/decision-layer`) grades those photos and writes `plan.json`, a ranked list of
+net cells with how to look at each one. A plan run flies those targets instead of the sweep:
+- each viewpoint is a waypoint `standoff_m` from the net, aimed at the cell centre, so offset
+  viewpoints see the same spot from another angle;
+- `shots` photos per waypoint;
+- `margin_m` is that ROV's HOCBF inflation (one filter per ROV). The margin is raised only as
+  far as the ROV already clears, so the barrier never starts out violated;
+- a target with two robots gives each robot one viewpoint, and they take turns on the target.
+  Side by side they would block each other under the HOCBF;
+- every photo carries `target_id`, the plan's `cell`, `viewpoint` and `visit`. That is how the
+  decision layer closes the mission;
+- `plan_status.json` lists the photos per target and robot, timeouts, and viewpoints a rope blocked;
+- `--plan-revisits N` flies the targets N more times, spread through `--plan-coverage N` cells of
+  ordinary sweep, so the ranked areas are photographed more often.
+
+The loop, with the decision layer on a laptop:
+```bash
+# GPU machine: the sweep
+RUNS=hero ./scripts/run_cluster.sh
+# laptop (decision-layer/): grade, rank and plan
+scp -r "user@cluster:~/abyss_out/run_hero" . && npm run stand-in-vision -- run_hero   # until the real detector writes vision.jsonl
+npm run cli -- import run_hero && npm run cli -- plan --out plan.json && scp plan.json user@cluster:~/
+# GPU machine: act on the plan, with the same OBST / BANDS / EXTRA as the sweep, so the scene matches
+RUNS=plan PLAN=~/plan.json PLAN_FLAGS="--plan-revisits 1 --plan-coverage 24" ./scripts/run_cluster.sh
+# laptop: close the missions and plan again
+scp -r "user@cluster:~/abyss_out/run_plan" . && npm run stand-in-vision -- run_plan && npm run cli -- import run_plan && npm run cli -- plan
+```
+Laptop tests for the plan logic: `uv run --with numpy --with pytest pytest tests`.
+The Isaac side of `--plan` (moving, margins, turns, shots) has not been run on a GPU yet.
 
 ## Local (Windows, with a window)
 ```powershell

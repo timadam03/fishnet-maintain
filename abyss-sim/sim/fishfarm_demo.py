@@ -35,6 +35,9 @@ Options:
     --diver            moving obstacle: a diver crossing the pen (HOCBF uses its velocity)
     --perception       HOCBF built from simulated sonar hits (no map) -- the sim-to-real path
     --no-viz           hide the nominal (yellow) / safe (green, red = filter active) command arrows
+    --plan PLAN.json   fly the decision layer's ranked targets (closer, other angles, more shots, per-target
+                       HOCBF margin) instead of the sweep; photos carry target_id; writes plan_status.json
+    --plan-revisits N  --plan-coverage N  --wp-timeout S       (see sim/plan_mode.py)
 """
 
 import argparse
@@ -99,6 +102,15 @@ parser.add_argument("--obstacles", type=int, default=3,
                     help="hanging ropes/hoses inside the pen when navigation is on (any number, e.g. 3, 6, 12)")
 parser.add_argument("--oceansim-ext", default="isaacsim.oceansim",
                     help="OceanSim extension id as shown in Window > Extensions")
+parser.add_argument("--plan", default=None,
+                    help="fly the decision layer's plan.json (ranked targets) instead of the coverage sweep. "
+                         "Use the same --standoff, --bands, --obstacles and --defect-seed as the sweep, so the scene matches")
+parser.add_argument("--plan-revisits", type=int, default=0,
+                    help="fly the plan targets this many extra times, spread through the coverage cells")
+parser.add_argument("--plan-coverage", type=int, default=0,
+                    help="after the targets, sweep this many of the plan's coverage cells (stalest first) at --standoff")
+parser.add_argument("--wp-timeout", type=float, default=None,
+                    help="seconds to reach a waypoint before photographing anyway (default 20, 40 with --plan)")
 args, _ = parser.parse_known_args()
 
 # SimulationApp must be created before any other omni / isaacsim import
@@ -168,7 +180,10 @@ RES = (640, 360) if args.lite else (1280, 720)   # --hq keeps 1280x720; use --re
 FOCAL, H_APERTURE = 18.0, 20.955
 V_APERTURE = H_APERTURE * RES[1] / RES[0]
 SETTLE_POS, SETTLE_YAW, SETTLE_SPEED = 0.15, math.radians(4.0), 0.08
-SETTLE_FRAMES, WP_TIMEOUT = 30, 20.0
+SETTLE_FRAMES = 30
+# A plan sends robots across the pen between targets, with the filter slowing them: allow longer.
+# 40 s is a starting value to tune on the GPU, not a measured transit time.
+WP_TIMEOUT = args.wp_timeout or (40.0 if args.plan else 20.0)
 
 LAMP_INTENSITY = 1.5e6    # vehicle spotlights -- tweak if too bright/dark
 # Real net-inspection footage is a lit net against flat, dark water: everything past the net is
@@ -180,11 +195,11 @@ FOG_END = 12.0            # visibility distance [m]
 rng = np.random.default_rng(7)
 
 # ----------------------------------------------------------------------------- safe navigation
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 NAV = bool(args.nav_policy or args.safe_nav)
 POLICY, SAFETY, NCFG = None, None, None
 if NAV:
-    import sys
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import safe_nav as sn
     NCFG = dict(sn.DEFAULTS)
     if args.nav_policy:
@@ -192,9 +207,12 @@ if NAV:
         NCFG.update({k: v for k, v in POLICY.cfg.items() if k in sn.DEFAULTS})
         print(f"[nav] learned policy {args.nav_policy}  (training eval: {POLICY.cfg.get('eval')})")
     if not args.no_cbf:
-        SAFETY = sn.SafetyFilter(NCFG["a_max"], NCFG["drag"], NCFG["alpha1"], NCFG["alpha2"],
-                                 NCFG["net_radius"], NCFG["inflation"], NCFG["detect_radius"],
-                                 current=CURRENT[:2], use_wall=not args.perception)
+        # One filter per ROV: a plan gives each target its own margin (inflation), and one robot
+        # moving in close must not change the margin the others keep.
+        SAFETY = [sn.SafetyFilter(NCFG["a_max"], NCFG["drag"], NCFG["alpha1"], NCFG["alpha2"],
+                                  NCFG["net_radius"], NCFG["inflation"], NCFG["detect_radius"],
+                                  current=CURRENT[:2], use_wall=not args.perception)
+                  for _ in range(N_AUV)]
     print(f"[nav] HOCBF filter {'ON' if SAFETY else 'OFF'}, nominal = {'PPO policy' if POLICY else 'goal-seeking'}")
 NAV_SWITCH = 0.8          # [m] use the policy for transits longer than this, PD-in-accel for final approach
 HOVER_KP, HOVER_KD = 1.0, 1.6
@@ -759,16 +777,21 @@ def ui_cell(theta, z):
     return row * UI_SECTORS + col
 
 
-def label(theta, z):
+def label(theta, z, dist=STANDOFF):
+    """Ground truth for a camera `dist` m from the net, looking at (theta, z).
+
+    The footprint shrinks with the distance, so a close-up sees only the defects right in front of it.
+    """
+    foot_w, foot_h = 2 * dist * math.tan(hfov / 2), 2 * dist * math.tan(vfov / 2)
     col = int((theta % (2 * math.pi)) // DTH_PANEL)
     row = int(min(N_ROWS - 1, max(0.0, -z) // PANEL_H))
     holes = [{"panel": f"r{r}_c{c:02d}", "theta": hu / CAGE_R, "z": hv, "radius": hr}
              for (r, c, hu, hv, hr) in HOLES
-             if abs(wrap(hu / CAGE_R - theta)) * CAGE_R < FOOT_W / 2 and abs(hv - z) < FOOT_H / 2]
+             if abs(wrap(hu / CAGE_R - theta)) * CAGE_R < foot_w / 2 and abs(hv - z) < foot_h / 2]
     # How much of what this camera sees is affected, sampled over the footprint. The classifier
     # is scored against these, so they are fractions rather than a panel-wide yes/no.
     uc = theta * CAGE_R
-    pts = [((uc + (i / 3.0 - 0.5) * FOOT_W) % U_MAX, z + (j / 3.0 - 0.5) * FOOT_H)
+    pts = [((uc + (i / 3.0 - 0.5) * foot_w) % U_MAX, z + (j / 3.0 - 0.5) * foot_h)
            for i in range(4) for j in range(4)]
     foul_frac = sum(1 for (pu, pv) in pts if foul_at(pu, pv) > 0.12) / len(pts)
     thin_frac = sum(1 for (pu, pv) in pts if thin_at(pu, pv) > 0.25) / len(pts)
@@ -836,6 +859,8 @@ if NAV and args.obstacles > 0:
         bind(buoy, M["auv"])
     keep_out = NCFG["inflation"] + 0.2       # only drop photo spots the HOCBF won't let the ROV reach
     for k in range(N_AUV):
+        if args.plan:                        # plan waypoints are checked below, with their own margins
+            break
         n0 = len(plans[k])
         plans[k] = [w for w in plans[k]
                     if all(math.hypot(w["pos"][0] - x, w["pos"][1] - y) > r + keep_out for x, y, r in OBSTACLES)]
@@ -844,6 +869,27 @@ if NAV and args.obstacles > 0:
     kinds = [c[3] for c in chosen]
     print(f"[nav] {len(chosen)} obstacles: {kinds.count('path')} on inspection paths, "
           f"{kinds.count('transit')} across transits, {kinds.count('random')} random")
+
+# ----------------------------------------------------------------------------- plan mode
+# The ropes above were placed from the coverage sweep, so a plan run has the same scene as the
+# sweep that produced the plan. Only now are the robots' waypoints swapped for the plan's.
+PLAN, PLAN_STATUS = None, {}
+if args.plan:
+    import plan_mode as pm
+    PLAN = pm.load_plan(args.plan, UI_SECTORS, UI_WALL_ROWS)
+    plans = pm.build_waypoints(PLAN, N_AUV, CAGE_R, CAGE_DEPTH, coverage_standoff=STANDOFF,
+                               base_margin=NCFG["inflation"] if NAV else 0.6,
+                               revisits=args.plan_revisits, coverage_limit=args.plan_coverage)
+    PLAN_STATUS = {t["target_id"]: {"cell": t["cell"], "robots": t["robots"], "photos": {}, "timeouts": 0,
+                                    "blocked": []} for t in PLAN["targets"]}
+    for k in range(N_AUV):
+        plans[k], blocked = pm.drop_blocked(plans[k], OBSTACLES)
+        for w in blocked:                    # reported, so the decision layer can re-plan the target
+            if w["target_id"]:
+                PLAN_STATUS[w["target_id"]]["blocked"].append({"auv": k, "viewpoint": w["viewpoint"]})
+                print(f"[plan] auv_{k}: target {w['target_id']} viewpoint {w['viewpoint']} blocked by a rope")
+    print(f"[plan] {PLAN['plan_id']}: {len(PLAN['targets'])} targets, "
+          f"waypoints per AUV {[len(p) for p in plans]} (revisits {args.plan_revisits}, coverage {args.plan_coverage})")
 
 diver_ops = None
 if NAV and args.diver:
@@ -1017,8 +1063,26 @@ if NAV and not args.no_viz and not args.headless:
 auvs = RigidPrim(prim_paths_expr="/World/auv_.*", name="auvs")
 world.scene.add(auvs)
 
-state = [{"wp": 0, "settle": 0, "t_wp": 0.0, "pending": False, "timeout": False, "done": False}
-         for _ in range(N_AUV)]
+state = [{"wp": 0, "settle": 0, "t_wp": 0.0, "pending": False, "timeout": False, "done": False,
+          "shot": 0, "wait": False, "hold": None, "lock": None} for _ in range(N_AUV)]
+LOCKS = {}   # plan target_id -> the AUV on it now; robots sharing a target take turns
+
+
+def enter_waypoint(k, t, pos_k):
+    """AUV k moves on to its current waypoint: it hands over the target it leaves, then takes the
+    lock of the target it goes to, or holds where it is until the other robot has finished there."""
+    if PLAN is None:                          # the coverage sweep has no shared targets
+        return
+    s = state[k]
+    tid = None if s["done"] else plans[k][s["wp"]].get("target_id")
+    go, s["lock"] = pm.take_turn(LOCKS, k, s["lock"], tid)
+    if go:
+        if s["wait"]:
+            print(f"[plan] auv_{k}: target {tid} is free, going in")
+        s.update(wait=False, t_wp=t)
+    elif not s["wait"]:
+        s.update(wait=True, hold=np.asarray(pos_k, dtype=float).copy())
+        print(f"[plan] auv_{k}: waiting for auv_{LOCKS[tid]} to finish target {tid}")
 prev_q = [None] * N_AUV
 sim_t = [0.0]
 for k in range(N_AUV):
@@ -1049,6 +1113,8 @@ def target(k):
     if s["done"]:
         return homes[k], (k + 0.5) * SECTOR
     wp = plans[k][s["wp"]]
+    if s["wait"]:
+        return s["hold"], wp["yaw"]
     return wp["pos"], wp["yaw"]
 
 
@@ -1119,7 +1185,13 @@ def physics_step(dt):
                 u_nom = np.clip((a_des + NCFG["drag"] * v2) / NCFG["a_max"], -1, 1)
             ns["tick"] += 1
             if SAFETY is not None:
-                u, info = SAFETY.filter(p2, v2, u_nom, circles, escape=ESCAPE)
+                if PLAN is not None:                                  # this target's margin, raised only as the ROV clears it
+                    sk = state[k]
+                    want = NCFG["inflation"] if sk["done"] or sk["wait"] else \
+                        plans[k][sk["wp"]].get("margin", NCFG["inflation"])
+                    SAFETY[k].inflation = pm.ramp_margin(SAFETY[k].inflation, want,
+                                                         sn.clearance(p2, circles, CAGE_R, 0.0))
+                u, info = SAFETY[k].filter(p2, v2, u_nom, circles, escape=ESCAPE)
                 ns["interv"] = info["intervened"]
             else:
                 u = u_nom
@@ -1147,7 +1219,7 @@ def physics_step(dt):
 
         # waypoint logic
         s = state[k]
-        if not s["done"] and not s["pending"]:
+        if not s["done"] and not s["pending"] and not s["wait"]:
             ok = np.linalg.norm(e) < SETTLE_POS and abs(ey) < SETTLE_YAW and np.linalg.norm(v) < SETTLE_SPEED
             s["settle"] = s["settle"] + 1 if ok else 0
             if s["settle"] >= SETTLE_FRAMES or sim_t[0] - s["t_wp"] > WP_TIMEOUT:
@@ -1262,6 +1334,8 @@ print(f"[demo] ground truth: {len(HOLES)} holes (radii {[round(h[4], 2) for h in
 counts = [0] * N_AUV
 finished_reported = False
 finish_t = None
+for k in range(N_AUV):
+    enter_waypoint(k, 0.0, homes[k])
 
 while simulation_app.is_running():
     world.step(render=True)
@@ -1321,6 +1395,8 @@ while simulation_app.is_running():
                 nav[k]["led_red"] = red
     for k in range(N_AUV):
         s = state[k]
+        if s["wait"]:
+            enter_waypoint(k, t, pos[k])
         if not s["pending"]:
             continue
         if not s.get("cam_on"):                      # switch this camera on, give it a few frames
@@ -1343,11 +1419,19 @@ while simulation_app.is_running():
         out_png = os.path.join(args.out, f"auv_{k}", f"img_{counts[k]:04d}.png")
         os.makedirs(os.path.dirname(out_png), exist_ok=True)
         Image.fromarray(data).save(out_png)
-        lab = label(wp["theta"], wp["z"])
+        lab = label(wp["theta"], wp["z"], wp.get("look_dist", STANDOFF))
         rec = {"image": fname, "run_id": RUN_ID, "auv": k, "sim_time": round(t, 3), "band": wp["band"],
                "theta_deg": round(math.degrees(wp["theta"]) % 360, 2), "depth": wp["z"],
                "position": np.round(np.asarray(pos[k], dtype=float), 3).tolist(),
                "timeout": s["timeout"], **lab}
+        if PLAN is not None:
+            # The plan's cell, not ui_cell(theta): an offset viewpoint can sit over the next cell.
+            rec.update(cell=wp["cell"], plan_id=PLAN["plan_id"], viewpoint=wp["viewpoint"], visit=wp["visit"])
+            if wp["target_id"]:
+                rec["target_id"] = wp["target_id"]       # closes the mission in the decision layer
+                st = PLAN_STATUS[wp["target_id"]]
+                st["photos"][str(k)] = st["photos"].get(str(k), 0) + 1
+                st["timeouts"] += int(s["timeout"])
         meta_file.write(json.dumps(rec) + "\n")
         meta_file.flush()
         tag = " <-- HOLE IN VIEW" if lab["holes_in_view"] else (" (fouled)" if lab["fouled"] else "")
@@ -1355,13 +1439,23 @@ while simulation_app.is_running():
         counts[k] += 1
         if REC is not None:
             REC["shots"].append(k)
-        s.update(wp=s["wp"] + 1, settle=0, t_wp=t, pending=False)
+        if s["shot"] + 1 < wp.get("shots", 1):           # more photos from this spot: stay pending
+            s["shot"] += 1
+            continue
+        s.update(wp=s["wp"] + 1, settle=0, t_wp=t, pending=False, shot=0)
         if s["wp"] >= len(plans[k]):
             s["done"] = True
+        enter_waypoint(k, t, pos[k])
     if not finished_reported and all(s["done"] for s in state):
         finished_reported = True
         print(f"[demo] inspection complete: {sum(counts)} images in {os.path.abspath(args.out)}")
         finish_t = t
+        if PLAN is not None:
+            with open(os.path.join(args.out, "plan_status.json"), "w") as f:
+                json.dump({"plan_id": PLAN["plan_id"], "run_id": RUN_ID, "targets": PLAN_STATUS}, f, indent=2)
+            for tid, st in PLAN_STATUS.items():
+                print(f"[plan] {tid} (cell {st['cell']}): photos by AUV {st['photos']}, "
+                      f"{st['timeouts']} timed out, {len(st['blocked'])} viewpoint(s) blocked")
         if NAV:
             summary = {f"auv_{k}": {"min_clearance_m": round(float(nav[k]["min_clr"]), 3),
                                     "contacts": nav[k]["contacts"],
