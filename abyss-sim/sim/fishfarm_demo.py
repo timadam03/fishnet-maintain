@@ -45,6 +45,13 @@ import time
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--bands", type=int, default=3)
+parser.add_argument("--survey", default="centre", choices=["centre", "orbit"],
+                    help="centre (default): hold station near the middle of the pen and yaw through "
+                         "the sector, so the whole net is surveyed from far away. orbit: fly along "
+                         "the net at --standoff, the close pass a decision layer asks for.")
+parser.add_argument("--centre-radius", type=float, default=1.5,
+                    help="distance from the pen axis each vehicle holds in centre survey [m]. "
+                         "Keeps the three apart; 0 would stack them on the axis.")
 parser.add_argument("--standoff", type=float, default=4.0,
                     help="distance from the net when taking pictures [m]. The survey pass runs far "
                          "(default 4); a decision-layer re-inspection runs close (e.g. 1.5)")
@@ -717,10 +724,15 @@ def build_auv(k, pos, yaw):
 # ----------------------------------------------------------------------------- coverage plan
 hfov = 2 * math.atan(H_APERTURE / (2 * FOCAL))
 vfov = 2 * math.atan(V_APERTURE / (2 * FOCAL))
-FOOT_W = 2 * STANDOFF * math.tan(hfov / 2)    # footprint on net [m]
-FOOT_H = 2 * STANDOFF * math.tan(vfov / 2)
-R_PATH = CAGE_R - STANDOFF
 SECTOR = 2 * math.pi / N_AUV
+CENTRE_R = max(0.0, args.centre_radius)
+# In centre survey the vehicle sits on a small circle and looks outward, so the net is between
+# CAGE_R - CENTRE_R (straight ahead) and a little more at the edges of its sweep. Taking the near
+# value keeps the footprint estimate conservative.
+VIEW_DIST = (CAGE_R - CENTRE_R) if args.survey == "centre" else STANDOFF
+FOOT_W = 2 * VIEW_DIST * math.tan(hfov / 2)   # footprint on net [m]
+FOOT_H = 2 * VIEW_DIST * math.tan(vfov / 2)
+R_PATH = CAGE_R - STANDOFF                     # orbit survey only
 
 if args.full_coverage:
     z_top, z_bot = -max(0.6, FOOT_H / 2), -CAGE_DEPTH + FOOT_H / 2
@@ -728,7 +740,7 @@ if args.full_coverage:
 else:
     z_top, z_bot, n_bands = -1.2, -CAGE_DEPTH + 1.2, max(1, args.bands)
 BANDS = np.linspace(z_top, z_bot, n_bands) if n_bands > 1 else np.array([z_top])
-N_PER_BAND = math.ceil(SECTOR * CAGE_R / (FOOT_W * (1 - OVERLAP)))
+N_PER_BAND = max(1, math.ceil(SECTOR * CAGE_R / (FOOT_W * (1 - OVERLAP))))
 
 
 def wrap(a):
@@ -736,14 +748,28 @@ def wrap(a):
 
 
 def plan(k):
+    """Waypoints for vehicle k.
+
+    centre survey: hold one point per depth band near the pen axis and yaw across the sector.
+    The vehicle barely translates, so a whole band is a rotation rather than a lap of the net.
+    That is the far, cheap first pass: the station is the same, only the heading changes.
+
+    orbit survey: the original lap along the net at --standoff, which is what a re-inspection
+    of a flagged zone should fly.
+    """
     wps = []
     th0, dth = k * SECTOR, SECTOR / N_PER_BAND
+    mid = th0 + SECTOR / 2
     for b, z in enumerate(BANDS):
         cols = range(N_PER_BAND) if b % 2 == 0 else reversed(range(N_PER_BAND))
         for i in cols:
             th = th0 + (i + 0.5) * dth
-            wps.append({"pos": np.array([R_PATH * math.cos(th), R_PATH * math.sin(th), z]),
-                        "yaw": th, "theta": th, "z": float(z), "band": b})
+            if args.survey == "centre":
+                # One station per band, on the sector midline; only yaw changes shot to shot.
+                pos = np.array([CENTRE_R * math.cos(mid), CENTRE_R * math.sin(mid), z])
+            else:
+                pos = np.array([R_PATH * math.cos(th), R_PATH * math.sin(th), z])
+            wps.append({"pos": pos, "yaw": th, "theta": th, "z": float(z), "band": b})
     return wps
 
 
@@ -780,7 +806,8 @@ def label(theta, z):
 cam_paths, plans, homes = [], [], []
 for k in range(N_AUV):
     mid = (k + 0.5) * SECTOR
-    home = np.array([3.0 * math.cos(mid), 3.0 * math.sin(mid), -1.5])
+    home_r = CENTRE_R if args.survey == "centre" else 3.0
+    home = np.array([home_r * math.cos(mid), home_r * math.sin(mid), -1.5])
     homes.append(home)
     cam_paths.append(build_auv(k, home, mid))
     plans.append(plan(k))
