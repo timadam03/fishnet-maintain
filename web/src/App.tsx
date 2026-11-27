@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useReducer, useRef } from 'react';
 import { DAYS, STORM_FORECAST_DAY, TODAY, cellLabel, type World } from './data/model';
 import { generateWorld } from './data/simulate';
-import { CellPanel, FindingPanel, PenPanel, SitePanel } from './components/SidePanel';
+import { CellPanel, DronePanel, FindingPanel, PenPanel, SitePanel } from './components/SidePanel';
+import { swarmState } from './data/swarm';
 import { Legend } from './components/Legend';
 import { PenView } from './components/PenView';
 import { SiteMap } from './components/SiteMap';
@@ -28,6 +29,8 @@ export default function App() {
   const open = useMemo(() => openFindings(world, day, reviews), [day, reviews]);
   const pen = penIndex === null ? null : world.pens[penIndex];
   const finding = findingId === null ? null : (world.findings.find((f) => f.id === findingId) ?? null);
+  const drones = useMemo(() => swarmState(world, day, open), [day, open]);
+  const drone = state.droneId === null ? null : (drones.find((d) => d.id === state.droneId) ?? null);
   const penOpen = useMemo(() => (pen ? open.filter((f) => f.penId === pen.id) : []), [open, pen]);
 
   // Keep the view in the URL: moving between levels adds a history entry (so Back works); time and layer replace it.
@@ -94,7 +97,8 @@ export default function App() {
 
   const common = { world, day, reviews, dispatch };
   let side;
-  if (finding) side = <FindingPanel {...common} finding={finding} />;
+  if (drone) side = <DronePanel {...common} drone={drone} />;
+  else if (finding) side = <FindingPanel {...common} finding={finding} />;
   else if (pen && penIndex !== null && cell !== null)
     side = <CellPanel {...common} penIndex={penIndex} cell={cell} cellFindings={world.findings.filter((f) => f.penId === pen.id && f.cell === cell && f.detectedDay <= day)} />;
   else if (pen && penIndex !== null) side = <PenPanel {...common} penIndex={penIndex} summary={summaries[penIndex]} penFindings={world.findings.filter((f) => f.penId === pen.id)} />;
@@ -147,7 +151,11 @@ export default function App() {
       </header>
 
       <main className="stage">
-        <SiteMap world={world} day={day} summaries={summaries} open={open} onOpenPen={(i) => dispatch({ type: 'pen', penIndex: i })} focusPen={penIndex} />
+        <SiteMap world={world} day={day} summaries={summaries} open={open} onOpenPen={(i) => dispatch({ type: 'pen', penIndex: i })} focusPen={penIndex}
+          drones={drones}
+          selectedDrone={state.droneId}
+          onSelectDrone={(id) => dispatch({ type: 'drone', id })}
+        />
         {pen && penIndex !== null ? (
           <PenView
             key={penIndex}
@@ -160,6 +168,8 @@ export default function App() {
             sliceDepth={state.sliceDepth}
             findings={penOpen}
             reviews={reviews}
+            drones={drones}
+            selectedDrone={state.droneId}
             dispatch={dispatch}
           />
         ) : (

@@ -22,6 +22,13 @@ All data is **synthetic** (a seeded simulation), and the top bar says "Demo data
   - Fouling is teal.
   - Oxygen and temperature are blue.
   - "Last seen" is grey.
+- **The swarm.** Drones circle their pens on the site map and sweep along the net in 3D (moving in live
+  mode). Each takes the highest-priority area in its pen (risk × days since last seen); no two drones
+  share a pen, and open findings keep a drone on them. Click a drone for its task, the reason it was
+  chosen, battery, depth, health and queue. Drone D7 is docked for repair, which is why Pen 8's cone
+  goes stale. Logic: `src/data/swarm.ts`.
+- **Current.** In 3D, faint streamlines bend around the pen, and particles drift along them at the
+  day's current speed. On the site map, arrows show the current.
 - **Water inside the pen.** On the oxygen and temperature layers, a horizontal slice through the pen
   at a depth you choose shows how values change across the pen, such as oxygen dropping where water
   leaves the pen.
@@ -112,7 +119,7 @@ Charts and heatmaps are drawn by hand with SVG and canvas, so no chart library i
 These parts of the UI concept are left out on purpose:
 
 - company level with several sites
-- robots moving on the map, and live robot operations
+- live robot video and manual control
 - planning calendar and work-order board
 - reports and compliance export
 - diver mode for tablets, with offline sync

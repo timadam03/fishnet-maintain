@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, type RefObject } from 'react';
 import { ANGLE_SECTORS, SECTOR_DEG, TODAY, cellCol, type Finding, type World } from '../data/model';
 import { riskColor } from '../lib/layers';
 import type { PenSummary } from '../lib/summary';
+import type { Drone } from '../data/swarm';
 import { color } from '../lib/tokens';
 
 interface Props {
@@ -12,6 +13,9 @@ interface Props {
   onOpenPen: (penIndex: number) => void;
   /** Pen the view is zoomed into, or null for the whole site. */
   focusPen: number | null;
+  drones: Drone[];
+  selectedDrone: string | null;
+  onSelectDrone: (id: string) => void;
 }
 
 /** Framed tightly around the pens and barge; the chart itself extends beyond it. */
@@ -78,22 +82,42 @@ function arc(cx: number, cy: number, r0: number, r1: number, a0: number, a1: num
 const BARGE: [number, number] = [84, 520];
 // Sea and land run far past the viewBox so the chart fills any pane shape without letterboxing.
 const COAST = 'M-3000,-3000H4000V40H1000C900,66 820,30 700,56C590,80 520,44 420,70C320,96 250,58 170,92C110,118 50,156 0,196H-3000Z';
-const DRONES = [
-  { pen: 0, dur: 38, phase: 0 },
-  { pen: 2, dur: 44, phase: 120 },
-  { pen: 3, dur: 36, phase: 220 },
-  { pen: 4, dur: 50, phase: 60 },
-  { pen: 6, dur: 41, phase: 300 },
-  { pen: 7, dur: 47, phase: 180 },
-];
 
 /** Top-down farm view drawn like a sea chart; each pen is a ring coloured by the worst hole risk on each side of its net. */
-export const SiteMap = memo(function SiteMap({ world, day, summaries, open, onOpenPen, focusPen }: Props) {
+export const SiteMap = memo(function SiteMap({ world, day, summaries, open, onOpenPen, focusPen, drones, selectedDrone, onSelectDrone }: Props) {
   const speed = world.env.currentSpeed[day];
   const dir = world.env.currentDir[day];
   const live = day === TODAY;
   const centers = world.pens.map((p) => toMap(p.x, p.y));
   const svgRef = useRef<SVGSVGElement>(null);
+  const droneEls = useRef<Record<string, SVGGElement | null>>({});
+  const clockStart = useRef(performance.now());
+
+  /** Where a drone is drawn after `elapsed` seconds: circling its pen, or parked at the barge. */
+  const dronePosition = (d: Drone, elapsed: number): [number, number] => {
+    if (d.penIndex === null) return [BARGE[0] - 20, BARGE[1] - 30];
+    const [cx, cy] = centers[d.penIndex];
+    const start = d.cell === null ? 0 : cellCol(d.cell) * SECTOR_DEG;
+    const period = 30 + (d.id.charCodeAt(1) % 7) * 5;
+    return polar(cx, cy, R + 13, start + (elapsed / period) * 360);
+  };
+
+  // Live mode: move the drones round their pens. Positions are set directly, without re-rendering.
+  useEffect(() => {
+    if (!live || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    let raf = 0;
+    const tick = (now: number): void => {
+      const elapsed = (now - clockStart.current) / 1000;
+      for (const d of drones) {
+        const el = droneEls.current[d.id];
+        if (el) el.setAttribute('transform', `translate(${dronePosition(d, elapsed).join(' ')})`);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+    // dronePosition only reads constants of this render (pen centres).
+  }, [live, drones]);
   const focusKey = focusPen === null ? 'site' : `${centers[focusPen][0]},${centers[focusPen][1]}`;
   const target = useMemoBox(focusKey);
   useViewBoxTween(svgRef, target);
@@ -210,16 +234,41 @@ export const SiteMap = memo(function SiteMap({ world, day, summaries, open, onOp
         );
       })}
 
-      {/* Swarm drones, animated in live mode only */}
-      {live &&
-        DRONES.map((d, k) => {
-          const [cx, cy] = centers[d.pen];
-          return (
-            <g key={k} className="drone" aria-hidden="true" style={{ transformOrigin: `${cx}px ${cy}px`, animationDuration: `${d.dur}s`, animationDelay: `-${(d.phase / 360) * d.dur}s` }}>
-              <circle cx={cx} cy={cy - R - 12} r={3.5} fill={color.signal} stroke={color.paper} strokeWidth={1.5} />
-            </g>
-          );
-        })}
+      {/* Swarm drones: each circles the pen it is assigned to (moving in live mode only); click for details. */}
+      {drones.map((d) => {
+        const selected = d.id === selectedDrone;
+        const docked = d.penIndex === null;
+        return (
+          <g
+            key={d.id}
+            ref={(el) => {
+              droneEls.current[d.id] = el;
+            }}
+            className="drone"
+            transform={`translate(${dronePosition(d, 0).join(' ')})`}
+            role="button"
+            tabIndex={0}
+            aria-label={`${d.name}: ${d.task}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelectDrone(d.id);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onSelectDrone(d.id);
+              }
+            }}
+          >
+            <circle r={11} fill="transparent" />
+            {selected && <circle r={8} fill="none" stroke={color.signal} strokeWidth={1.5} />}
+            <circle className="body" r={4} fill={docked ? color.ink3 : color.signal} stroke={color.paper} strokeWidth={1.5} />
+            <text x={7} y={-6} fontSize={10} fill={color.ink2}>
+              {d.id}
+            </text>
+          </g>
+        );
+      })}
     </svg>
   );
 });

@@ -22,6 +22,7 @@ import {
   rowDepth,
   type Finding,
 } from '../data/model';
+import type { Drone } from '../data/swarm';
 import { paintNetTexture } from '../lib/heat';
 import type { LayerDef, LayerGrid } from '../lib/layers';
 import { color } from '../lib/tokens';
@@ -31,8 +32,15 @@ interface Props {
   layer: LayerDef;
   selectedCell: number | null;
   findings: Finding[];
-  /** Direction the current flows towards, degrees. */
+  /** Direction the current flows towards, degrees, and its speed in cm/s. */
   currentDir: number;
+  currentSpeed: number;
+  /** Drones working in this pen. */
+  drones: Drone[];
+  selectedDrone: string | null;
+  onSelectDrone: (id: string) => void;
+  /** Live mode animates drones and the current; history and forecast are still. */
+  live: boolean;
   onSelect: (cell: number) => void;
   onSelectFinding: (f: Finding) => void;
   labelFor: (f: Finding) => string;
@@ -148,7 +156,11 @@ interface SceneCtx {
   textureCanvas: HTMLCanvasElement;
   outline: THREE.Line;
   markers: THREE.Group;
-  arrow: THREE.ArrowHelper;
+  flowLines: THREE.LineSegments;
+  flowPoints: THREE.Points;
+  droneGroup: THREE.Group;
+  /** Advances drones and current particles to time `t` (seconds) and re-renders. */
+  animate: (t: number) => void;
   /** Smoothly orbits the camera to an azimuth (theta) and/or polar angle (phi), in radians. */
   orbitTo: (to: { theta?: number; phi?: number }) => () => void;
   sliceMesh: THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>;
@@ -157,7 +169,54 @@ interface SceneCtx {
   render: () => void;
 }
 
-export default function Pen3D({ grid, layer, selectedCell, findings, currentDir, onSelect, onSelectFinding, labelFor, slice, focusCell }: Props) {
+/** Streamlines of the current past the pen: straight far away, nudged outward near the net. */
+function flowPaths(dirDeg: number): THREE.Vector3[][] {
+  const a = (dirDeg * Math.PI) / 180;
+  const along = new THREE.Vector3(Math.sin(a), 0, -Math.cos(a));
+  const across = new THREE.Vector3(Math.cos(a), 0, Math.sin(a));
+  const paths: THREE.Vector3[][] = [];
+  for (const depth of [3, 11, 19]) {
+    for (let b = -1.75; b <= 1.76; b += 0.5) {
+      const pts: THREE.Vector3[] = [];
+      for (let k = 0; k <= 40; k++) {
+        const s = (-2.6 + (5.2 * k) / 40) * R;
+        const lateral = b * R * (1 + 0.22 * Math.exp(-(s * s) / (1.4 * R * R)));
+        pts.push(along.clone().multiplyScalar(s).add(across.clone().multiplyScalar(lateral)).setY(-depth));
+      }
+      paths.push(pts);
+    }
+  }
+  return paths;
+}
+
+const PARTICLES_PER_PATH = 4;
+
+/** A drone's position: just outside the net at its task depth, sweeping a little either side of its area. */
+function dronePosition(d: Drone, t: number, k: number): THREE.Vector3 {
+  if (d.cell === null) return new THREE.Vector3(0, 2, -(R + 30));
+  const base = cellCol(d.cell) * SECTOR_DEG + SECTOR_DEG / 2;
+  const sweep = d.status === 'sampling' ? 40 * Math.sin(t / 9 + k) : 9 * Math.sin(t / 3 + k);
+  const depth = d.depth + (d.status === 'sampling' ? 3 * Math.sin(t / 5 + k) : 0);
+  return netPoint(Math.min(depth, WALL_DEPTH_M), base + sweep, (R + 2.6) / R);
+}
+
+export default function Pen3D({
+  grid,
+  layer,
+  selectedCell,
+  findings,
+  currentDir,
+  currentSpeed,
+  drones,
+  selectedDrone,
+  onSelectDrone,
+  live,
+  onSelect,
+  onSelectFinding,
+  labelFor,
+  slice,
+  focusCell,
+}: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const labelsRef = useRef<HTMLDivElement>(null);
   const ctx = useRef<SceneCtx | null>(null);
@@ -165,6 +224,15 @@ export default function Pen3D({ grid, layer, selectedCell, findings, currentDir,
   onSelectRef.current = onSelect;
   const findingsRef = useRef(findings);
   findingsRef.current = findings;
+  const dronesRef = useRef(drones);
+  dronesRef.current = drones;
+  const speedRef = useRef(currentSpeed);
+  speedRef.current = currentSpeed;
+  const onSelectDroneRef = useRef(onSelectDrone);
+  onSelectDroneRef.current = onSelectDrone;
+  const droneLabelsRef = useRef<HTMLDivElement>(null);
+  const timeRef = useRef(0);
+  const setFlowRef = useRef<((dirDeg: number) => void) | null>(null);
   const [hover, setHover] = useState<{ cell: number; x: number; y: number } | null>(null);
 
   // Scene setup, once.
@@ -202,8 +270,18 @@ export default function Pen3D({ grid, layer, selectedCell, findings, currentDir,
     scene.add(outline);
     const markers = new THREE.Group();
     scene.add(markers);
-    const arrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(), 14, color.signal, 4, 2.5);
-    scene.add(arrow);
+    // Current: faint streamlines with particles drifting along them.
+    const flowLines = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: color.signal, transparent: true, opacity: 0.16 }));
+    scene.add(flowLines);
+    const flowPoints = new THREE.Points(
+      new THREE.BufferGeometry(),
+      new THREE.PointsMaterial({ color: color.signal, size: 0.9, transparent: true, opacity: 0.75, depthWrite: false }),
+    );
+    scene.add(flowPoints);
+    let paths: THREE.Vector3[][] = [];
+
+    const droneGroup = new THREE.Group();
+    scene.add(droneGroup);
 
     const sliceCanvas = document.createElement('canvas');
     sliceCanvas.width = 128;
@@ -230,19 +308,63 @@ export default function Pen3D({ grid, layer, selectedCell, findings, currentDir,
       if (!box) return;
       const w = renderer.domElement.clientWidth;
       const h = renderer.domElement.clientHeight;
-      findingsRef.current.forEach((f, i) => {
-        const el = box.children[i] as HTMLElement | undefined;
+      const place = (el: HTMLElement | undefined, p: THREE.Vector3, alwaysVisible: boolean): void => {
         if (!el) return;
-        const p = cellCentre(f.cell, 1.0);
         const normal = p.clone().setY(0).normalize();
-        const facing = cellRow(f.cell) >= WALL_ROWS || camera.position.clone().sub(p).dot(normal) > 0;
-        const visible = facing;
-        const s = p.project(camera);
+        const visible = alwaysVisible || camera.position.clone().sub(p).dot(normal) > 0;
+        const s = p.clone().project(camera);
         el.style.transform = `translate(${((s.x + 1) / 2) * w}px, ${((1 - s.y) / 2) * h}px)`;
         el.style.opacity = visible ? '1' : '0';
         el.style.pointerEvents = visible ? 'auto' : 'none';
-      });
+      };
+      findingsRef.current.forEach((f, i) => place(box.children[i] as HTMLElement | undefined, cellCentre(f.cell, 1.0), cellRow(f.cell) >= WALL_ROWS));
+      const droneBox = droneLabelsRef.current;
+      if (droneBox) {
+        droneGroup.children.forEach((m, i) => place(droneBox.children[i] as HTMLElement | undefined, m.position, false));
+      }
     };
+
+    const animate = (t: number): void => {
+      timeRef.current = t;
+      dronesRef.current.forEach((d, k) => {
+        const m = droneGroup.children[k];
+        if (!m) return;
+        const p = dronePosition(d, t, k);
+        m.position.copy(p);
+        // Face along the net (tangent to the pen), the way it sweeps.
+        const a = Math.atan2(p.x, -p.z);
+        m.lookAt(p.x + Math.cos(a), p.y, p.z + Math.sin(a));
+      });
+      const pos = flowPoints.geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
+      if (pos && paths.length) {
+        const rate = 0.02 + speedRef.current / 900; // path lengths per second
+        let i = 0;
+        for (let pi = 0; pi < paths.length; pi++) {
+          const path = paths[pi];
+          for (let q = 0; q < PARTICLES_PER_PATH; q++) {
+            const u = (((t * rate + q / PARTICLES_PER_PATH + pi * 0.137) % 1) + 1) % 1;
+            const f = u * (path.length - 1);
+            const k0 = Math.floor(f);
+            const p = path[k0].clone().lerp(path[Math.min(path.length - 1, k0 + 1)], f - k0);
+            pos.setXYZ(i++, p.x, p.y, p.z);
+          }
+        }
+        pos.needsUpdate = true;
+      }
+      render();
+    };
+
+    const setFlow = (dirDeg: number): void => {
+      paths = flowPaths(dirDeg);
+      const segs: THREE.Vector3[] = [];
+      for (const path of paths) for (let k = 0; k < path.length - 1; k++) segs.push(path[k], path[k + 1]);
+      flowLines.geometry.dispose();
+      flowLines.geometry = new THREE.BufferGeometry().setFromPoints(segs);
+      flowPoints.geometry.dispose();
+      flowPoints.geometry = new THREE.BufferGeometry();
+      flowPoints.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(paths.length * PARTICLES_PER_PATH * 3), 3));
+    };
+    setFlowRef.current = setFlow;
 
     const render = (): void => {
       renderer.render(scene, camera);
@@ -271,11 +393,16 @@ export default function Pen3D({ grid, layer, selectedCell, findings, currentDir,
 
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
-    const pick = (e: PointerEvent): { cell: number; x: number; y: number } | null => {
+    const pick = (e: PointerEvent): { cell: number; droneId?: string; x: number; y: number } | null => {
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
       raycaster.setFromCamera(pointer, camera);
-      const hit = raycaster.intersectObject(net)[0];
+      const hit = raycaster.intersectObjects([droneGroup, net], true)[0];
+      if (hit && hit.object !== net) {
+        let o: THREE.Object3D | null = hit.object;
+        while (o && !o.userData.droneId) o = o.parent;
+        return o ? { cell: -1, droneId: o.userData.droneId as string, x: e.clientX - rect.left, y: e.clientY - rect.top } : null;
+      }
       if (!hit?.uv) return null;
       const col = Math.min(ANGLE_SECTORS - 1, Math.floor(hit.uv.x * ANGLE_SECTORS));
       const row = Math.min(ROWS - 1, Math.floor(hit.uv.y * ROWS));
@@ -288,13 +415,16 @@ export default function Pen3D({ grid, layer, selectedCell, findings, currentDir,
     const onUp = (e: PointerEvent): void => {
       if (down && Math.hypot(e.clientX - down[0], e.clientY - down[1]) < 4) {
         const hit = pick(e);
-        if (hit) onSelectRef.current(hit.cell);
+        if (hit?.droneId) onSelectDroneRef.current(hit.droneId);
+        else if (hit) onSelectRef.current(hit.cell);
       }
       down = null;
     };
     const onMove = (e: PointerEvent): void => {
       if (e.buttons) return;
-      setHover(pick(e));
+      const hit = pick(e);
+      setHover(hit && !hit.droneId ? hit : null);
+      renderer.domElement.style.cursor = hit ? 'pointer' : 'grab';
     };
     const onLeave = (): void => setHover(null);
     const el = renderer.domElement;
@@ -329,7 +459,7 @@ export default function Pen3D({ grid, layer, selectedCell, findings, currentDir,
       return () => cancelAnimationFrame(raf);
     };
 
-    ctx.current = { scene, camera, controls, orbitTo, net, texture, textureCanvas, outline, markers, arrow, sliceMesh, sliceCanvas, sliceTexture, render };
+    ctx.current = { scene, camera, controls, orbitTo, net, texture, textureCanvas, outline, markers, flowLines, flowPoints, droneGroup, animate, sliceMesh, sliceCanvas, sliceTexture, render };
     resize();
 
     return () => {
@@ -340,7 +470,7 @@ export default function Pen3D({ grid, layer, selectedCell, findings, currentDir,
       el.removeEventListener('pointermove', onMove);
       el.removeEventListener('pointerleave', onLeave);
       scene.traverse((o) => {
-        if (o instanceof THREE.Mesh || o instanceof THREE.Line) {
+        if (o instanceof THREE.Mesh || o instanceof THREE.Line || o instanceof THREE.Points) {
           o.geometry.dispose();
           const m = o.material as THREE.Material | THREE.Material[];
           (Array.isArray(m) ? m : [m]).forEach((x) => x.dispose());
@@ -437,16 +567,66 @@ export default function Pen3D({ grid, layer, selectedCell, findings, currentDir,
     return c.orbitTo({ phi: hasSlice ? 0.85 : 1.48 });
   }, [hasSlice]);
 
-  // Current arrow, placed on the upstream side and pointing downstream.
+  // Current streamlines follow the day's direction.
   useEffect(() => {
     const c = ctx.current;
     if (!c) return;
-    const a = (currentDir * Math.PI) / 180;
-    const dir = new THREE.Vector3(Math.sin(a), 0, -Math.cos(a));
-    c.arrow.setDirection(dir);
-    c.arrow.position.copy(dir.clone().multiplyScalar(-(R + 22))).setY(2);
-    c.render();
+    setFlowRef.current?.(currentDir);
+    c.animate(timeRef.current);
   }, [currentDir]);
+
+  // Drone bodies: a small hull with two thrusters; the selected drone gets a ring.
+  useEffect(() => {
+    const c = ctx.current;
+    if (!c) return;
+    c.droneGroup.children.forEach((g) =>
+      g.traverse((o) => {
+        if (o instanceof THREE.Mesh) {
+          o.geometry.dispose();
+          (o.material as THREE.Material).dispose();
+        }
+      }),
+    );
+    c.droneGroup.clear();
+    for (const d of drones) {
+      const g = new THREE.Group();
+      g.userData.droneId = d.id;
+      const hull = new THREE.Mesh(new THREE.CapsuleGeometry(0.75, 1.8, 6, 12), new THREE.MeshLambertMaterial({ color: color.signal }));
+      hull.rotation.x = Math.PI / 2; // long axis along local z, the direction it faces
+      g.add(hull);
+      for (const side of [-1, 1]) {
+        const thruster = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.6, 10), new THREE.MeshLambertMaterial({ color: color.ink2 }));
+        thruster.rotation.x = Math.PI / 2;
+        thruster.position.set(side * 0.9, 0, -1.1);
+        g.add(thruster);
+      }
+      if (d.id === selectedDrone) {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(2, 0.12, 8, 32), new THREE.MeshBasicMaterial({ color: color.signal }));
+        ring.rotation.x = Math.PI / 2;
+        g.add(ring);
+      }
+      c.droneGroup.add(g);
+    }
+    c.animate(timeRef.current);
+  }, [drones, selectedDrone]);
+
+  // Live mode: drones sweep and the current drifts, at about 30 frames a second.
+  useEffect(() => {
+    const c = ctx.current;
+    if (!c || !live || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    let raf = 0;
+    let last = 0;
+    const start = performance.now() - timeRef.current * 1000;
+    const tick = (now: number): void => {
+      if (now - last > 33) {
+        last = now;
+        c.animate((now - start) / 1000);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [live]);
 
 
   return (
@@ -456,6 +636,13 @@ export default function Pen3D({ grid, layer, selectedCell, findings, currentDir,
           <button key={f.id} className={`scene-label${f.kind === 'hole' ? ' hole' : ''}`} onClick={() => onSelectFinding(f)}>
             <span className="pin" aria-hidden="true" />
             {labelFor(f)}
+          </button>
+        ))}
+      </div>
+      <div ref={droneLabelsRef} className="scene-labels">
+        {drones.map((d) => (
+          <button key={d.id} className={`scene-label drone-label${d.id === selectedDrone ? ' selected' : ''}`} onClick={() => onSelectDrone(d.id)}>
+            {d.id}, {d.status === 'sampling' ? 'sampling' : d.status === 'returning' ? 'returning' : 'inspecting'}
           </button>
         ))}
       </div>
