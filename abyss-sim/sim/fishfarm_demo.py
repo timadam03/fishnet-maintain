@@ -785,7 +785,9 @@ def label(theta, z, dist=STANDOFF):
     foot_w, foot_h = 2 * dist * math.tan(hfov / 2), 2 * dist * math.tan(vfov / 2)
     col = int((theta % (2 * math.pi)) // DTH_PANEL)
     row = int(min(N_ROWS - 1, max(0.0, -z) // PANEL_H))
-    holes = [{"panel": f"r{r}_c{c:02d}", "theta": hu / CAGE_R, "z": hv, "radius": hr}
+    # `cell` is required by the decision layer's capture contract (contracts/capture.schema.json).
+    holes = [{"panel": f"r{r}_c{c:02d}", "cell": ui_cell(hu / CAGE_R, hv), "theta": hu / CAGE_R, "z": hv,
+              "radius": hr}
              for (r, c, hu, hv, hr) in HOLES
              if abs(wrap(hu / CAGE_R - theta)) * CAGE_R < foot_w / 2 and abs(hv - z) < foot_h / 2]
     # How much of what this camera sees is affected, sampled over the footprint. The classifier
