@@ -131,8 +131,17 @@ export interface CellAssessment {
 const qualityOf = (o: Observation): number => (o.quality ? Math.min(o.quality.visibility, o.quality.sharpness) : 0.6);
 const maxConf = (o: Observation, classes: Set<string>): number => Math.max(0, ...o.detections.filter((d) => classes.has(d.class)).map((d) => d.confidence));
 
-/** What a set of images says about one cell. Openings need two good views to count as confirmed. */
-export function assessCell(cell: number, obs: Observation[]): CellAssessment {
+/** A photo at or closer than this, with usable quality, counts as a close-up. Demo value. */
+export const CLOSE_UP_M = 1.8;
+
+/**
+ * What a set of images says about one cell. Openings need two good views to count as confirmed.
+ * Close-ups replace far photos as evidence: otherwise a far photo that was unsure would keep the
+ * cell in every plan even after a careful close look found nothing.
+ */
+export function assessCell(cell: number, all: Observation[]): CellAssessment {
+  const close = all.filter((o) => o.standoffM !== null && o.standoffM <= CLOSE_UP_M && qualityOf(o) >= 0.5);
+  const obs = close.length > 0 ? close : all;
   const opening = Math.max(0, ...obs.map((o) => maxConf(o, OPENING)));
   // A view is a robot on a pass: several shots from the same robot in the same run count once.
   const openingViews = new Set(obs.filter((o) => maxConf(o, OPENING) >= 0.7).map((o) => `${o.runId}|${o.auv ?? o.image}`)).size;
@@ -195,7 +204,8 @@ function profilesFor(a: CellAssessment | null, risk: { level: string; score: num
       reason: { rule: 'P2', text: `Unsure (p=${p.toFixed(2)}): re-image closer and with more shots.` } });
   }
   if (a?.status === 'unclear') {
-    out.push({ kind: 'reimage', priority: 0.55, robots: 1, scan: { standoff_m: 0.9, shots: 2, viewpoints: [view()] }, safety: { margin_m: 0.6 },
+    // Risk-weighted, so if the whole sweep is murky the robots look first where risk is highest.
+    out.push({ kind: 'reimage', priority: Number((0.45 + 0.1 * risk.score).toFixed(2)), robots: 1, scan: { standoff_m: 0.9, shots: 2, viewpoints: [view()] }, safety: { margin_m: 0.6 },
       reason: { rule: 'P3', text: `Image too poor to judge (quality ${a.quality.toFixed(2)}): go closer.` } });
   }
   if (a && a.fouling >= 0.4 && a.status !== 'confirmed_opening') {
@@ -241,7 +251,7 @@ export function buildPlan(store: Store, input: { penId: number; day: number; rob
   const byCell = new Map<number, Observation[]>();
   for (const o of observations(store, { penId: input.penId })) byCell.set(o.cell, [...(byCell.get(o.cell) ?? []), o]);
 
-  const candidates: Array<ReturnType<typeof merge> & { cell: number }> = [];
+  const candidates: Array<ReturnType<typeof merge> & { cell: number; risk: number }> = [];
   for (let cell = 0; cell < GRID.sectors * GRID.wallRows; cell++) {
     const obs = byCell.get(cell);
     const risk = explainRisk(sim, cell, input.day);
@@ -249,9 +259,10 @@ export function buildPlan(store: Store, input: { penId: number; day: number; rob
     if (profiles.length === 0) continue;
     const merged = merge(profiles, strongCurrent ? 0.4 : 0);
     if (strongCurrent) merged.reasons.push({ rule: 'G1', text: `Strong current (${world.env.currentSpeed[input.day].toFixed(0)} cm/s): margin +0.4 m.` });
-    candidates.push({ ...merged, cell });
+    candidates.push({ ...merged, cell, risk: risk.score });
   }
-  candidates.sort((a, b) => b.priority - a.priority || a.cell - b.cell);
+  // Ties go to the riskier area, not the lower cell number.
+  candidates.sort((a, b) => b.priority - a.priority || b.risk - a.risk || a.cell - b.cell);
   const chosen = candidates.slice(0, input.maxTargets ?? 10);
 
   // Robots start in the middle of their usual sector; each pick moves the robot and adds load.

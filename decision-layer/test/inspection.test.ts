@@ -8,6 +8,7 @@ import { Store } from '../src/store.ts';
 import { TODAY } from '../src/world.ts';
 
 const R = 8; // Isaac pen radius
+const SWEEP = 4; // Isaac's default sweep standoff (--standoff)
 const PEN = 7;
 
 /** An Isaac-style capture of `cell`, taken `standoff` metres from the net. */
@@ -21,14 +22,14 @@ function capture(run: string, i: number, cell: number, standoff: number, truth: 
   });
 }
 
-/** A first, even sweep at the default 2 m: a big hole, a small hole, thinning, fouling and a clean cell. */
+/** A first, even sweep at Isaac's default 4 m: a big hole, a small hole, thinning, fouling and a clean cell. */
 function firstPass(): SimCapture[] {
   return [
-    capture('run1', 1, 30, 2, { holes_in_view: [{ cell: 30, radius: 0.45 }] }),
-    capture('run1', 2, 100, 2, { holes_in_view: [{ cell: 100, radius: 0.1 }] }),
-    capture('run1', 3, 150, 2, { thinning_frac: 0.25 }),
-    capture('run1', 4, 60, 2, { fouling_frac: 0.6 }),
-    capture('run1', 5, 5, 2),
+    capture('run1', 1, 30, SWEEP, { holes_in_view: [{ cell: 30, radius: 0.45 }] }),
+    capture('run1', 2, 100, SWEEP, { holes_in_view: [{ cell: 100, radius: 0.1 }] }),
+    capture('run1', 3, 150, SWEEP, { thinning_frac: 0.25 }),
+    capture('run1', 4, 60, SWEEP, { fouling_frac: 0.6 }),
+    capture('run1', 5, 5, SWEEP),
   ];
 }
 
@@ -105,6 +106,19 @@ test('the loop: photos taken for the plan close its missions, and the next plan 
   const next = buildPlan(store, { penId: PEN, day: TODAY, robots: 3 });
   assert.equal(target(next, 30), undefined); // confirmed: repair, not more robot time
   assert.equal(target(next, 100)!.robots.length, 2); // escalated to two perspectives (P1)
+});
+
+test('a clean close-up clears what a far photo was unsure about, so the cell leaves the plan', () => {
+  const store = new Store(':memory:');
+  importAll(store, [capture('run1', 1, 100, SWEEP, { holes_in_view: [{ cell: 100, radius: 0.1 }] })]);
+  const plan = buildPlan(store, { penId: PEN, day: TODAY, robots: 3 });
+  const t = target(plan, 100)!;
+  assert.deepEqual(t.reasons.map((r) => r.rule), ['area', 'P2']);
+  // The close-up finds nothing (the "hole" was a shadow in the far photo).
+  const result = importAll(store, [capture('run2', 2, 100, t.scan.standoff_m, {}, 0, t.target_id), capture('run2', 3, 100, t.scan.standoff_m, {}, 0, t.target_id)]);
+  assert.match(result.missionsClosed[0].result, /^clear: 2 good images/);
+  assert.equal(assessCell(100, observations(store, { penId: PEN, cell: 100 })).status, 'clear');
+  assert.equal(target(buildPlan(store, { penId: PEN, day: TODAY, robots: 3 }), 100), undefined);
 });
 
 test('strong current widens every safety margin (G1)', () => {

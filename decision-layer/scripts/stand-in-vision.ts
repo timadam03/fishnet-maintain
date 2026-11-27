@@ -18,18 +18,23 @@ const clamp = (x: number, lo = 0, hi = 1): number => Math.min(hi, Math.max(lo, x
 /** Repeatable noise in [-1, 1] from the image name and a salt. */
 const noise = (key: string, salt: string): number => (createHash('sha256').update(key + salt).digest()[0] / 255) * 2 - 1;
 
+/**
+ * Tuned to Isaac's default 4 m sweep: from 4 m the images are usable (quality ≈ 0.65) but small
+ * holes and thinning come out unsure (0.4–0.55), a large hole likely (≈ 0.76); from the plan's
+ * 1–1.5 m close-ups a small hole reaches ≈ 0.8. That gap is what a guided re-scan buys.
+ */
 export function standInReport(c: SimCapture, cageRadiusM: number): VisionReport {
   const standoff = Math.max(0.3, cageRadiusM - Math.hypot(c.position[0], c.position[1]));
-  const sharpness = clamp(1.15 - 0.25 * standoff + 0.05 * noise(c.image, 's'));
-  const visibility = clamp(0.75 - 0.08 * standoff + 0.05 * noise(c.image, 'v'));
+  const sharpness = clamp(1.1 - 0.1 * standoff + 0.05 * noise(c.image, 's'));
+  const visibility = clamp(0.9 - 0.06 * standoff + 0.05 * noise(c.image, 'v'));
   const fouling = c.fouling_frac ?? 0;
   const detections: VisionReport['detections'] = [];
   for (const h of c.holes_in_view ?? []) {
-    const conf = clamp(0.95 - 0.18 * standoff + 0.4 * (h.radius - 0.15) - 0.3 * fouling + 0.05 * noise(c.image, 'h'), 0.05, 0.98);
+    const conf = clamp(1.0 - 0.12 * standoff + 0.8 * (h.radius - 0.15) - 0.3 * fouling + 0.04 * noise(c.image, 'h'), 0.05, 0.98);
     detections.push({ class: h.radius < 0.2 ? 'mesh_opening' : 'hole', confidence: Number(conf.toFixed(2)), bbox: [256, 144, 128, 72], size_m: Number((2 * h.radius).toFixed(2)) });
   }
   if ((c.thinning_frac ?? 0) > 0.05) {
-    const conf = clamp(0.35 + 0.6 * (c.thinning_frac ?? 0) - 0.08 * (standoff - 1) + 0.05 * noise(c.image, 't'), 0.05, 0.95);
+    const conf = clamp(0.4 + 1.0 * (c.thinning_frac ?? 0) - 0.06 * standoff + 0.04 * noise(c.image, 't'), 0.05, 0.95);
     detections.push({ class: 'thinning', confidence: Number(conf.toFixed(2)), bbox: [200, 120, 240, 120] });
   }
   if (fouling > 0.2) detections.push({ class: 'biofouling', confidence: Number(clamp(0.6 + 0.4 * fouling).toFixed(2)), bbox: [0, 0, 640, 360] });

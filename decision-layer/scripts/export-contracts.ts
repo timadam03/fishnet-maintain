@@ -21,13 +21,13 @@ for (const [name, schema] of Object.entries({ capture: SimCapture, 'vision-repor
   writeFileSync(new URL(`${name}.schema.json`, out), JSON.stringify(z.toJSONSchema(schema, { io: 'input' }), null, 2) + '\n');
 }
 
-// Same shapes Isaac writes: a 2 m sweep past a big hole, a small hole, thinning, fouling and a clean cell.
+// Same shapes Isaac writes: a 4 m sweep (Isaac's default) past a big hole, a small hole, thinning, fouling and a clean cell.
 const R = 8;
 const at = (i: number, cell: number, truth: Partial<SimCapture>): SimCapture => {
   const theta = (((cell % 24) + 0.5) * 15 * Math.PI) / 180;
   return SimCapture.parse({
     image: `auv_0/img_${String(i).padStart(4, '0')}.png`, run_id: 'example', auv: 0, sim_time: i * 12.5,
-    theta_deg: Number(((theta * 180) / Math.PI).toFixed(2)), depth: -1.5, position: [6 * Math.cos(theta), 6 * Math.sin(theta), -1.5].map((v) => Number(v.toFixed(3))),
+    theta_deg: Number(((theta * 180) / Math.PI).toFixed(2)), depth: -1.5, position: [4 * Math.cos(theta), 4 * Math.sin(theta), -1.5].map((v) => Number(v.toFixed(3))),
     cell, panel: 'r0_c00', fouled: (truth.fouling_frac ?? 0) > 0.05, fouling_frac: 0, thinning_frac: 0, holes_in_view: [], ...truth,
   });
 };

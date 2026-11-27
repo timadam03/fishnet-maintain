@@ -2,6 +2,7 @@
 
 Status: 2026-11-27. Schemas: [`contracts/`](../contracts/). Code: [`decision-layer/src/contracts.ts`](../decision-layer/src/contracts.ts).
 A runnable example run, with its plan, is in [`contracts/example-run/`](../contracts/example-run/).
+What the loop is for, and what the sim still needs to act on a plan: [`closed-loop.md`](closed-loop.md).
 
 ```
 Isaac sweep ──captures.jsonl──┐
@@ -51,10 +52,10 @@ Targets come best first. Each target says **where**, **how to look**, **how safe
 |---|---|---|
 | `cell`, `theta_deg`, `depth_frac` | The area (cell centre; depth as a fraction of the wall depth) | `theta = radians(theta_deg + d_theta_deg)`, `z = -(depth_frac + d_depth_frac) * CAGE_DEPTH` |
 | `scan.standoff_m` | Distance from the net for the photos | Waypoint radius `CAGE_R - standoff_m` |
-| `scan.viewpoints` | One or more offsets; several means several angles | One waypoint per viewpoint |
+| `scan.viewpoints` | One or more offsets; several means several angles | One waypoint per viewpoint, camera aimed at the cell centre |
 | `scan.shots` | Photos per viewpoint | Repeat the capture |
-| `safety.margin_m` | HOCBF margin while on this target | Set `SAFETY.inflation = margin_m` while flying to and holding this target |
-| `robots` | Which AUVs do it; two means two perspectives | Each listed AUV flies the target |
+| `safety.margin_m` | HOCBF margin while on this target | Use `margin_m` as this AUV's own HOCBF inflation while flying to and holding this target (one filter per AUV, raised only as far as the AUV already clears) |
+| `robots` | Which AUVs do it; two means two perspectives | The viewpoints are shared out among the listed AUVs, which take turns on the target (side by side they'd block each other) |
 | `target_id` | Ties photos to the mission | Copy into each capture record |
 | `reasons` | Why the target is there (rules P1–P6, G1) | Show in the video overlay if useful |
 | `coverage` | Remaining cells, stalest first | Sweep these after the targets if time allows |
@@ -82,6 +83,10 @@ The standoff is never smaller than `margin_m + 0.55` (rule S1), so every photo s
 
 A confirmed opening leaves the plan, because it now needs a repair, not more robot time.
 
+**Close-ups replace far photos as evidence.** Once an area has a close-up (≤ 1.8 m, quality ≥ 0.5), only the close-ups count. A far sweep photo that was unsure therefore stops pulling the area back into every plan after a careful close look finds nothing.
+
+**Known limit: aiming.** A close-up aims at the centre of the area. A far photo can credit a defect to its centre area even when the defect sits near the photo's edge. If the close-up then misses it, the area is wrongly marked clear. The fix is to aim at the detection's position in the far photo (its `bbox`), which needs the image size and field of view. Check this on the first GPU run.
+
 Schema: `contracts/inspection-plan.schema.json`.
 
 ## Running the loop
@@ -92,6 +97,7 @@ npm run stand-in-vision -- <run_dir>          # only until the real pipeline wri
 npm run cli -- import <run_dir>               # captures + vision → observations (Isaac pen = UI Pen 7)
 npm run cli -- plan --out <run_dir>/plan.json # what the robots should do next
 # Isaac: run again with --plan <run_dir>/plan.json, writing target_id into captures
+#        (built on branch feat/sim-plan-mode, not yet run on a GPU; see closed-loop.md)
 npm run cli -- import <run2_dir>              # closes the missions with results
 npm run cli -- missions                       # see what was confirmed or cleared
 npm run cli -- plan                           # the next plan escalates what's still unsure
@@ -104,7 +110,7 @@ npm run cli -- plan                           # the next plan escalates what's s
 **Notes:**
 - **One importer.** `decision-layer/src/inspection.ts` is the only importer. Einar's earlier `ingest.ts` is not used; its grid check now lives here. Before anything is stored, an import is refused if the run's grid (`ground_truth.json` → `grid.ui_sectors`, `grid.ui_wall_rows`) isn't 24 × 8.
 - **Isaac pen = UI Pen 7** (the sag case). Set `ISAAC_PEN` to change it.
-- **The stand-in grader** (`scripts/stand-in-vision.ts`) turns Isaac's ground truth into reports using a simple camera model: closer means more confident, and fouling hides holes. Use it to test the loop; its output is labelled `stand-in-ground-truth` and is not a detection.
+- **The stand-in grader** (`scripts/stand-in-vision.ts`) turns Isaac's ground truth into reports using a simple camera model, tuned to Isaac's default 4 m sweep. From 4 m, images are usable but small holes and thinning come out unsure; the plan's 1–1.5 m close-ups make them likely. Fouling hides holes. Use it to test the loop; its output is labelled `stand-in-ground-truth` and is not a detection.
 
 ## Validating from Python
 
