@@ -1,6 +1,7 @@
 /**
- * Small JSON API for the operator UI (web/). Decisions are recomputed per request from the shared
- * world; only what people do (reviews, alert closures, proposal decisions) and chat are stored.
+ * Small JSON API for the operator UI (web/) and for robots or the simulator (missions). Decisions
+ * are computed from the shared world; viewing a day records them in the decision log, and what
+ * people and robots do (reviews, closures, proposals, mission results) is stored.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { z } from 'zod';
@@ -9,6 +10,7 @@ import { runCurator } from './curator.ts';
 import { defaultDecisionModel } from './d1.ts';
 import { findingById, oxygenEventText, penDecisions, siteAlerts } from './engine.ts';
 import { ask } from './investigator.ts';
+import { logEntries, missions, recordDay, trace, updateMission } from './log.ts';
 import { sameFinding, similarEpisodes } from './memory.ts';
 import { rulesVersion } from './rules/types.ts';
 import { TODAY, dayLabel, world } from './world.ts';
@@ -50,7 +52,35 @@ async function route(req: IncomingMessage, url: URL): Promise<unknown> {
     return { ok: true, today: TODAY, todayDate: dayLabel(TODAY), rulesVersion: rulesVersion(config), models: modelStatus() };
   }
   if (method === 'GET' && path === '/api/alerts') {
-    return siteAlerts(dayParam(url), config, reviews, store.alertClosures());
+    const day = dayParam(url);
+    // Viewing a day records its decisions, so the log holds what was shown at the time.
+    await recordDay(store, day, defaultDecisionModel());
+    return siteAlerts(day, config, reviews, store.alertClosures());
+  }
+  if (method === 'GET' && path === '/api/log') {
+    const pen = url.searchParams.get('pen');
+    const day = url.searchParams.get('day');
+    return logEntries(store, { day: day === null ? undefined : dayParam(url), penId: pen === null ? undefined : Number(pen), entity: url.searchParams.get('entity') ?? undefined });
+  }
+  if (method === 'GET' && path === '/api/trace') {
+    const entity = url.searchParams.get('entity');
+    if (!entity || !/^(cell:\d+:\d+|finding:\d+|oxygen:\d+)$/.test(entity)) throw new HttpError(400, 'entity must be cell:<pen>:<cell>, finding:<id> or oxygen:<pen>');
+    return trace(store, entity);
+  }
+  if (method === 'GET' && path === '/api/missions') {
+    const status = z.enum(['requested', 'assigned', 'done', 'cancelled']).optional().safeParse(url.searchParams.get('status') ?? undefined);
+    if (!status.success) throw new HttpError(400, 'status must be requested, assigned, done or cancelled');
+    const pen = url.searchParams.get('pen');
+    return missions(store, { status: status.data, penId: pen === null ? undefined : Number(pen) });
+  }
+  const mm = path.match(/^\/api\/missions\/(\d+)$/);
+  if (method === 'POST' && mm) {
+    const b = await body(req, z.object({ status: z.enum(['assigned', 'done', 'cancelled']), robot: z.string().max(40).optional(), result: z.string().max(200).optional(), note: z.string().max(500).optional() }));
+    try {
+      return updateMission(store, Number(mm[1]), b);
+    } catch (error) {
+      throw new HttpError(404, (error as Error).message);
+    }
   }
   if (method === 'POST' && path === '/api/alerts/close') {
     const b = await body(req, z.object({ key: z.string(), status: z.enum(['confirmed', 'dismissed']), reason: z.string().nullable().default(null) }));
@@ -61,7 +91,9 @@ async function route(req: IncomingMessage, url: URL): Promise<unknown> {
   if (method === 'GET' && m) {
     const penId = Number(m[1]);
     if (!world.pens.some((p) => p.id === penId)) throw new HttpError(404, `unknown pen ${penId}`);
-    return penDecisions(penId, dayParam(url), config, reviews);
+    const day = dayParam(url);
+    await recordDay(store, day, defaultDecisionModel());
+    return penDecisions(penId, day, config, reviews);
   }
   m = path.match(/^\/api\/pens\/(\d+)\/oxygen-memory$/);
   if (method === 'GET' && m) {

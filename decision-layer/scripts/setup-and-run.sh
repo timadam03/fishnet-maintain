@@ -87,7 +87,9 @@ if [ -n "$id" ]; then
   line "Operator accepts proposal $id"
   run accept "$id"
   line "Learning beat again (rules v2)"
-  run demo | sed -n '/^4\./,$p'
+  run demo | sed -n '/^4\./,/^5\./p' | sed '$d'
+  line "Trace of finding 206: the decision before and after the rule change"
+  run trace finding:206
 else
   echo "(no proposal made, so nothing to accept)"
 fi

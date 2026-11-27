@@ -40,6 +40,20 @@ export class Store {
       CREATE TABLE IF NOT EXISTS chat_messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT NOT NULL, text TEXT NOT NULL,
         tool_calls_json TEXT, at TEXT NOT NULL);
+      -- Append-only record of what was decided, from which inputs, under which rules (log.ts).
+      -- One row per day, entity and rules version: a rule change adds a row, it never overwrites.
+      CREATE TABLE IF NOT EXISTS decision_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL UNIQUE, logged_at TEXT NOT NULL,
+        day INTEGER NOT NULL, pen_id INTEGER NOT NULL, entity TEXT NOT NULL, outcome TEXT NOT NULL,
+        level TEXT, rules_json TEXT NOT NULL, rules_version TEXT NOT NULL, reason TEXT NOT NULL,
+        recommend TEXT, inputs_json TEXT NOT NULL, links_json TEXT NOT NULL, alert_key TEXT,
+        mission_id INTEGER);
+      -- Work the decision layer asks the swarm to do; robots (Isaac, the UI's swarm) report back here.
+      CREATE TABLE IF NOT EXISTS missions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL,
+        day INTEGER NOT NULL, pen_id INTEGER NOT NULL, kind TEXT NOT NULL, cells_json TEXT NOT NULL,
+        priority TEXT NOT NULL, reason TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'requested',
+        robot TEXT, result TEXT, note TEXT, updated_at TEXT NOT NULL);
     `);
   }
 
@@ -114,9 +128,11 @@ export class Store {
     this.db.prepare('INSERT INTO chat_messages (role, text, tool_calls_json, at) VALUES (?, ?, ?, ?)').run(role, text, toolCalls === null ? null : JSON.stringify(toolCalls), new Date().toISOString());
   }
 
-  /** Wipes everything people did, for a clean demo run. */
+  /** Wipes everything people did, the decision log and missions, for a clean demo run. */
   reset(): void {
     // Also restart the id counters, so a fresh demo run shows proposal 1 again.
-    this.db.exec("DELETE FROM reviews; DELETE FROM alert_closures; DELETE FROM proposals; DELETE FROM chat_messages; DELETE FROM sqlite_sequence WHERE name IN ('proposals', 'chat_messages');");
+    this.db.exec(`DELETE FROM reviews; DELETE FROM alert_closures; DELETE FROM proposals; DELETE FROM chat_messages;
+      DELETE FROM decision_log; DELETE FROM missions;
+      DELETE FROM sqlite_sequence WHERE name IN ('proposals', 'chat_messages', 'decision_log', 'missions');`);
   }
 }

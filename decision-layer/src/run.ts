@@ -4,13 +4,18 @@
  *   npm run cli -- ask "question"  investigator
  *   npm run cli -- curator         run the curator once
  *   npm run cli -- accept <id>     accept a proposal
- *   npm run cli -- reset           clear reviews, closures, proposals and chat
+ *   npm run cli -- record [day]    record a day's decisions in the log
+ *   npm run cli -- trace <entity>  saw → decided → did → outcome, e.g. cell:7:188 or finding:206
+ *   npm run cli -- missions [status]           list missions for the robots
+ *   npm run cli -- mission <id> <status> [result]  report a mission's progress, as a robot would
+ *   npm run cli -- reset           clear reviews, closures, proposals, chat, log and missions
  */
 import { modelStatus, openStore } from './app.ts';
 import { runCurator } from './curator.ts';
 import { defaultDecisionModel } from './d1.ts';
 import { findingById, oxygenEventText, penDecisions, siteAlerts } from './engine.ts';
 import { ask } from './investigator.ts';
+import { missions, recordDay, trace, updateMission } from './log.ts';
 import { sameFinding, similarEpisodes } from './memory.ts';
 import { decideFinding } from './rules/net.ts';
 import { TODAY, dayLabel } from './world.ts';
@@ -44,6 +49,24 @@ async function demo(): Promise<void> {
   console.log('\n4. Learning: low-confidence fraying finding 206');
   console.log(`   v1 → ${decideFinding(findingById(206), { frayingReimageBelow: null }).reason}`);
   console.log(`   active rules → ${decideFinding(findingById(206), store.config()).reason}`);
+
+  // Record the days the beats use, so their decisions are in the log under the active rules.
+  for (const day of [delousing, findingById(206).detectedDay, TODAY]) await recordDay(store, day, d1);
+  console.log('\n5. Trace: Pen 7, 17.5–20 m, 300–315° (what it saw → decided → did → outcome)');
+  printTrace('cell:7:188');
+  console.log(`   open missions: ${missions(store, { status: 'requested' }).map((m) => `#${m.id} ${m.kind} Pen ${m.penId} (${m.priority})`).join(', ')}`);
+}
+
+function printTrace(entity: string): void {
+  const steps = trace(store, entity);
+  if (steps.length === 0) console.log(`   (nothing logged for ${entity})`);
+  for (const s of steps) {
+    const links = s.decided.links.map((l) => `${l.to} ${l.linked ? 'linked' : 'not linked'} ${l.probability === null ? '(fallback)' : `p=${l.probability.toFixed(2)}`}`).join('; ');
+    console.log(`   ${s.date} [${s.decided.rulesVersion}] saw ${JSON.stringify(s.saw)}`);
+    console.log(`      decided ${s.decided.outcome}${s.decided.level ? ` (${s.decided.level})` : ''} by ${s.decided.rules.join('+')}: ${s.decided.reason}${links ? ` | memory: ${links}` : ''}`);
+    console.log(`      did ${s.did.mission ? `mission #${s.did.mission.id} ${s.did.mission.kind}` : s.did.alert ? `alert ${s.did.alert}` : 'nothing'}${s.did.recommend ? ` | recommends: ${s.did.recommend}` : ''}`);
+    console.log(`      outcome mission: ${s.outcome.mission ?? '-'} | alert: ${s.outcome.alert ?? '-'} | review: ${s.outcome.review ?? '-'}`);
+  }
 }
 
 async function main(): Promise<void> {
@@ -67,12 +90,28 @@ async function main(): Promise<void> {
       console.log(`accepted proposal ${p.id}: ${JSON.stringify(p.change)}`);
       return;
     }
+    case 'record': {
+      const day = args[0] === undefined ? TODAY : Number(args[0]);
+      console.log(`recorded ${await recordDay(store, day, defaultDecisionModel())} decisions for ${dayLabel(day)} (0 = already recorded under these rules)`);
+      return;
+    }
+    case 'trace':
+      printTrace(args[0] ?? '');
+      return;
+    case 'missions':
+      for (const m of missions(store, { status: args[0] as never })) console.log(`#${m.id} ${m.status} ${m.kind} Pen ${m.penId} ${m.priority} ${m.areas.slice(0, 3).join('; ')}${m.areas.length > 3 ? ` (+${m.areas.length - 3})` : ''}: ${m.reason}${m.result ? ` → ${m.result}` : ''}`);
+      return;
+    case 'mission': {
+      const m = updateMission(store, Number(args[0]), { status: args[1] as 'assigned' | 'done' | 'cancelled', result: args.slice(2).join(' ') || undefined });
+      console.log(`mission #${m.id}: ${m.status}${m.result ? ` → ${m.result}` : ''}`);
+      return;
+    }
     case 'reset':
       store.reset();
-      console.log('cleared reviews, alert closures, proposals and chat');
+      console.log('cleared reviews, alert closures, proposals, chat, decision log and missions');
       return;
     default:
-      console.log('commands: demo | ask "<question>" | curator | accept <id> | reset');
+      console.log('commands: demo | ask "<question>" | curator | accept <id> | record [day] | trace <entity> | missions [status] | mission <id> <assigned|done|cancelled> [result] | reset');
       process.exitCode = 1;
   }
 }

@@ -14,7 +14,8 @@ What it adds to the UI:
 | Memory | `src/memory.ts`, `../data/seed_memory.json` | Episodes (seeded history, storms, operations, findings and their outcomes). "Same finding?" and "similar past episode?" asked to d1, with stated fallback rules when d1 is off |
 | Learning | `src/curator.ts` | Review statistics per finding kind and confidence → at most one proposal from an allowed list; a person accepts it; the rules change |
 | Investigator | `src/investigator.ts` | Answers operator questions with read-only tools over decisions, risk history, findings, operations and memory |
-| API | `src/server.ts` | JSON over HTTP for the UI |
+| Decision log and missions | `src/log.ts` | Records each non-OK decision once per day and rules version: what it saw, which rules fired, memory links, what it did. A rule change adds entries, never rewrites them. Turns inspections and re-samples into missions for the robots (one open mission per target), which robots or the simulator mark assigned/done with a result. A trace per area, finding or pen reads saw → decided → did → outcome |
+| API | `src/server.ts` | JSON over HTTP for the UI, and missions for robots |
 
 All thresholds are demo starting values, not research findings. The seeded episodes are invented. Nothing
 here controls farm equipment: farm actions are recommendations a person approves.
@@ -49,7 +50,10 @@ npm run cli -- demo           # print the demo beats
 npm run cli -- curator        # run the curator once
 npm run cli -- accept 1       # accept proposal 1
 npm run cli -- ask "Why is Pen 7 at 17.5–20 m high risk?"
-npm run cli -- reset          # clear reviews, closures, proposals, chat
+npm run cli -- trace cell:7:188              # saw → decided → did → outcome (also finding:<id>, oxygen:<pen>)
+npm run cli -- missions requested            # work waiting for the robots
+npm run cli -- mission 1 done confirmed      # report a result, as a robot would
+npm run cli -- reset          # clear reviews, closures, proposals, chat, decision log and missions
 ```
 
 ## Test
@@ -76,7 +80,13 @@ npm run typecheck
 | `POST /api/curator` | `{day?}` | `{proposals, author, note}` |
 | `GET /api/proposals` | | all proposals |
 | `POST /api/proposals/:id` | `{decision: accepted\|rejected}` | the proposal |
+| `GET /api/log?day=&pen=&entity=` | | decision log entries: inputs, rules, rules version, reason, memory links, alert key, mission id |
+| `GET /api/trace?entity=` | | `cell:<pen>:<cell>`, `finding:<id>` or `oxygen:<pen>` → steps of saw / decided / did / outcome, oldest first |
+| `GET /api/missions?status=&pen=` | | missions (high priority first): kind, net areas, reason, status, robot, result |
+| `POST /api/missions/:id` | `{status: assigned\|done\|cancelled, robot?, result?, note?}` | the mission; for robots or the simulator |
 | `POST /api/reset` | | `{ok}` |
+
+`GET /api/alerts` and `GET /api/pens/:id` record the requested day in the decision log before answering.
 
 ## Demo beats (`npm run cli -- demo`)
 
@@ -87,3 +97,4 @@ npm run typecheck
 2. **8 Nov, delousing:** Pens 3 and 4 hit critical oxygen. Memory recalls the seeded June delousing episode and its outcome.
 3. **Pen 4 chafe:** finding 202, low-confidence fraying, was rejected as a fouling shadow. Six days later the same cell was confirmed as chafe (finding 203). Memory links the two.
 4. **Learning:** the curator finds that all 4 low-confidence fraying findings were rejected, but one hid real chafe. It proposes "re-image instead of operator review" (F1). Once that's accepted, finding 206 goes to re-image.
+5. **Trace:** Pen 7's sag area shows what the layer saw (score and factors), what it decided (N4), what it did (a close-inspection mission) and the outcome (requested, until a robot reports back). `trace finding:206` shows the same finding decided twice: under v1 (review) and v2 (re-image mission).
