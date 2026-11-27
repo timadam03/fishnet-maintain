@@ -3,6 +3,7 @@
  * Two typed questions link new events to memory: "same finding?" and "similar past episode?".
  * d1 answers them with a probability; without d1 a stated fallback rule answers instead.
  */
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { Experimental_DecisionModel } from 'ai';
 import { askYesNo } from './d1.ts';
@@ -103,8 +104,10 @@ export async function similarEpisodes(
     .slice(0, 3);
   if (candidates.length === 0) return [];
 
-  const key = `similar:${event.kind}:${event.penId}:${event.day}:${candidates.map((c) => c.id).join(',')}`;
-  const answers = model ? await cachedAsk(store, key, model, similarState(event, candidates), candidateQuestions(candidates)) : null;
+  const state = similarState(event, candidates);
+  // Keyed on the exact text sent, so changing what d1 is told never reuses a stale answer.
+  const key = `similar:${createHash('sha256').update(state).digest('hex').slice(0, 16)}`;
+  const answers = model ? await cachedAsk(store, key, model, state, candidateQuestions(candidates)) : null;
 
   return candidates.map((episode, i) => {
     const answer = answers?.[`similar_${i}`];

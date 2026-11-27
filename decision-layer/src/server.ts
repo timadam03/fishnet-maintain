@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { modelStatus, openStore } from './app.ts';
 import { runCurator } from './curator.ts';
 import { defaultDecisionModel } from './d1.ts';
-import { findingById, penDecisions, siteAlerts } from './engine.ts';
+import { findingById, oxygenEventText, penDecisions, siteAlerts } from './engine.ts';
 import { ask } from './investigator.ts';
 import { sameFinding, similarEpisodes } from './memory.ts';
 import { rulesVersion } from './rules/types.ts';
@@ -68,7 +68,7 @@ async function route(req: IncomingMessage, url: URL): Promise<unknown> {
     const penId = Number(m[1]);
     const day = dayParam(url);
     const oxygen = penDecisions(penId, day, config, reviews).oxygen;
-    return similarEpisodes({ kind: 'oxygen', penId, day, text: oxygen.reason }, store, defaultDecisionModel());
+    return similarEpisodes({ kind: 'oxygen', penId, day, text: oxygenEventText(penId, day, oxygen.reason) }, store, defaultDecisionModel());
   }
   m = path.match(/^\/api\/findings\/(\d+)\/review$/);
   if (method === 'POST' && m) {

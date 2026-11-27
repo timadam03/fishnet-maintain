@@ -9,7 +9,7 @@
 import { modelStatus, openStore } from './app.ts';
 import { runCurator } from './curator.ts';
 import { defaultDecisionModel } from './d1.ts';
-import { findingById, penDecisions, siteAlerts } from './engine.ts';
+import { findingById, oxygenEventText, penDecisions, siteAlerts } from './engine.ts';
 import { ask } from './investigator.ts';
 import { sameFinding, similarEpisodes } from './memory.ts';
 import { decideFinding } from './rules/net.ts';
@@ -33,7 +33,7 @@ async function demo(): Promise<void> {
   console.log(`\n2. ${dayLabel(delousing)}: delousing oxygen drop, with memory recall`);
   const pen3 = penDecisions(3, delousing, store.config(), store.reviews());
   console.log(`   Pen 3 oxygen: ${pen3.oxygen.kind} ${pen3.oxygen.level ?? ''} ${pen3.oxygen.reason}`);
-  for (const l of await similarEpisodes({ kind: 'oxygen', penId: 3, day: delousing, text: pen3.oxygen.reason }, store, d1)) {
+  for (const l of await similarEpisodes({ kind: 'oxygen', penId: 3, day: delousing, text: oxygenEventText(3, delousing, pen3.oxygen.reason) }, store, d1)) {
     console.log(`   ${l.linked ? 'LINKED ' : 'not linked'} ${dayLabel(l.episode.day)}: ${l.episode.text} → ${l.episode.outcome} [${l.note}]`);
   }
 

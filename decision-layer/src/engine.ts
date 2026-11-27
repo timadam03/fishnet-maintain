@@ -146,6 +146,15 @@ export function siteAlerts(
     });
 }
 
+/**
+ * Describes an oxygen event for memory questions, including what the farm was doing that day.
+ * Without the operations, a decision model can't tell a delousing drop from a natural one.
+ */
+export function oxygenEventText(penId: number, day: number, reason: string): string {
+  const ops = world.operations.filter((o) => o.day === day && (o.penId === penId || o.penId === null) && o.kind !== 'cleaning').map((o) => o.label);
+  return `Pen ${penId}: ${reason}${ops.length > 0 ? ` Operations that day: ${ops.join('; ')}.` : ' No farm operations that day.'}`;
+}
+
 export function findingById(id: number): Finding {
   const f = world.findings.find((x) => x.id === id);
   if (!f) throw new Error(`unknown finding ${id}`);
