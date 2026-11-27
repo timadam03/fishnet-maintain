@@ -6,7 +6,7 @@
  */
 import { generateText, isStepCount, tool } from 'ai';
 import { z } from 'zod';
-import { agentModel } from './llm.ts';
+import { agentModel, shortError } from './llm.ts';
 import { findingStatus } from './memory.ts';
 import type { Proposal, Store } from './store.ts';
 import { cellLabel, dayLabel, world } from './world.ts';
@@ -69,20 +69,26 @@ function ruleBasedProposal(stats: BandStats[]): { id: AllowedId; rationale: stri
   return { id: 'reimage_low_confidence_fraying', rationale, evidence: g.findings.map((f) => `finding ${f.id}`) };
 }
 
-export async function runCurator(store: Store, day: number): Promise<{ proposals: Proposal[]; author: string; note: string }> {
+type CuratorResult = { proposals: Proposal[]; author: string; note: string };
+
+function ruleBasedRun(store: Store, stats: BandStats[], why: string): CuratorResult {
+  const p = ruleBasedProposal(stats);
+  if (!p || alreadyProposed(store, p.id)) return { proposals: [], author: 'rules', note: `No new proposal (rule-based curator: ${why}).` };
+  const saved = store.addProposal({ ...ALLOWED[p.id], change: { ...ALLOWED[p.id].change }, rationale: p.rationale, evidence: p.evidence, author: 'rules' });
+  return { proposals: [saved], author: 'rules', note: `Rule-based curator (${why}).` };
+}
+
+export async function runCurator(store: Store, day: number): Promise<CuratorResult> {
   const stats = findingStats(day, store.reviews());
   const llm = agentModel();
-
-  if (!llm) {
-    const p = ruleBasedProposal(stats);
-    if (!p || alreadyProposed(store, p.id)) return { proposals: [], author: 'rules', note: 'No new proposal (rule-based curator; no model configured).' };
-    const saved = store.addProposal({ ...ALLOWED[p.id], change: { ...ALLOWED[p.id].change }, rationale: p.rationale, evidence: p.evidence, author: 'rules' });
-    return { proposals: [saved], author: 'rules', note: 'Rule-based curator (no model configured).' };
-  }
+  if (!llm) return ruleBasedRun(store, stats, 'no model configured');
 
   const created: Proposal[] = [];
-  const result = await generateText({
+  let result;
+  try {
+    result = await generateText({
     model: llm.model,
+    maxRetries: 1,
     stopWhen: isStepCount(6),
     system:
       'You are the curator of a fish-farm net monitoring system. You review how operators closed past findings and propose at most one rule change, only from the allowed list, only when the evidence supports it. Cite finding ids. Be brief and factual; never invent numbers.',
@@ -111,6 +117,10 @@ export async function runCurator(store: Store, day: number): Promise<{ proposals
         },
       }),
     },
-  });
+    });
+  } catch (error) {
+    if (created.length > 0) return { proposals: created, author: llm.id, note: `Model stopped early: ${shortError(error)}` };
+    return ruleBasedRun(store, stats, `${llm.id} failed: ${shortError(error)}`);
+  }
   return { proposals: created, author: llm.id, note: result.text };
 }

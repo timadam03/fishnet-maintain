@@ -14,4 +14,11 @@ export function agentModel(): { model: LanguageModel; id: string } | null {
   return null;
 }
 
-export const NO_MODEL_NOTE = 'No agent model configured (set GEMINI_MODEL and GOOGLE_GENERATIVE_AI_API_KEY in .env).';
+/** First line of a model error, without the request dump the SDK attaches. */
+export function shortError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const quota = /limit: 0/.test(message) ? ' (this model has no free-tier quota on your key: pick another model with npm run setup)' : '';
+  return message.split('\n')[0].replace(/^Failed after \d+ attempts\. Last error: /, '').slice(0, 220) + quota;
+}
+
+export const NO_MODEL_NOTE ='No agent model configured (set GEMINI_MODEL and GOOGLE_GENERATIVE_AI_API_KEY in .env).';

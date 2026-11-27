@@ -4,8 +4,8 @@
  */
 import { generateText, isStepCount, tool } from 'ai';
 import { z } from 'zod';
-import { oxygenSources, penDecisions } from './engine.ts';
-import { agentModel, NO_MODEL_NOTE } from './llm.ts';
+import { oxygenEventText, oxygenSources, penDecisions } from './engine.ts';
+import { agentModel, NO_MODEL_NOTE, shortError } from './llm.ts';
 import { findingStatus, searchMemory, similarEpisodes } from './memory.ts';
 import { defaultDecisionModel } from './d1.ts';
 import { decideOxygen } from './rules/oxygen.ts';
@@ -31,8 +31,11 @@ export async function ask(store: Store, question: string, day = TODAY): Promise<
   const cell = z.number().int().min(0).max(CELLS - 1);
   const dayIndex = z.number().int().min(0).max(96).describe(`Day index; today is ${TODAY} (${dayLabel(TODAY)})`);
 
-  const result = await generateText({
+  let result;
+  try {
+    result = await generateText({
     model: llm.model,
+    maxRetries: 1,
     stopWhen: isStepCount(8),
     system: SYSTEM,
     prompt: `Today is ${dayLabel(day)} (day index ${day}). Day index d is ${dayLabel(0)} + d days. Question: ${question}`,
@@ -59,7 +62,7 @@ export async function ask(store: Store, question: string, day = TODAY): Promise<
         inputSchema: z.object({ pen_id: penId, day: dayIndex }),
         execute: async ({ pen_id, day: d }) => {
           const decision = decideOxygen(oxygenSources(pen_id, d), d);
-          const recall = decision.kind === 'ALERT' ? await similarEpisodes({ kind: 'oxygen', penId: pen_id, day: d, text: decision.reason }, store, defaultDecisionModel()) : [];
+          const recall = decision.kind === 'ALERT' ? await similarEpisodes({ kind: 'oxygen', penId: pen_id, day: d, text: oxygenEventText(pen_id, d, decision.reason) }, store, defaultDecisionModel()) : [];
           return { decision: { ...decision, lowSources: decision.lowSources.length }, similarPast: recall.map((l) => ({ date: dayLabel(l.episode.day), text: l.episode.text, outcome: l.episode.outcome, linked: l.linked, how: l.note })) };
         },
       }),
@@ -83,7 +86,11 @@ export async function ask(store: Store, question: string, day = TODAY): Promise<
         execute: async ({ text }) => searchMemory(text, day, reviews).map((e) => ({ date: dayLabel(e.day), pen: e.penId, text: e.text, outcome: e.outcome })),
       }),
     },
-  });
+    });
+  } catch (error) {
+    // The decisions themselves never depend on the model, so a model failure only costs the answer.
+    return { text: `The ${llm.id} model failed: ${shortError(error)}`, toolCalls: [], model: llm.id };
+  }
 
   const toolCalls = result.steps.flatMap((s) => s.toolCalls.map((c) => ({ tool: c.toolName, input: c.input })));
   store.addChat('user', question);

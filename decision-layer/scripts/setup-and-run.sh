@@ -46,14 +46,37 @@ if [ -n "$key" ]; then
   default=$(echo "$options" | grep -qxF "$saved" && echo "$saved" || echo "$options" | head -1)
   echo "Models on this key (type a number, or press Enter for the default):"
   echo "$options" | nl -w2 -s') '
+  # The list includes models a key can't actually use (retired for new users, or no free-tier
+  # quota), so the chosen one gets a one-token test request before it is saved.
+  test_model() {
+    curl -sS -m 30 -H "x-goog-api-key: $key" -H "content-type: application/json" \
+      -d '{"contents":[{"parts":[{"text":"ok"}]}],"generationConfig":{"maxOutputTokens":1}}' \
+      "https://generativelanguage.googleapis.com/v1beta/models/$1:generateContent" 2>/dev/null |
+      node -e 'let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{
+        let r; try { r = JSON.parse(s); } catch { console.log("no answer (network?)"); return; }
+        if (!r.error) { console.log("ok"); return; }
+        const m = r.error.message || "";
+        if (r.error.code === 429 && /limit: 0/.test(m)) console.log("no free-tier quota for this model on your key");
+        else if (r.error.code === 404) console.log("not available on your key");
+        else if (r.error.code === 503) console.log("busy right now (Google says try again later)");
+        else console.log(r.error.code + ": " + m.split("\n")[0].slice(0, 120));
+      })'
+  }
   while true; do
     read -rp "Choice [$default]: " choice
-    if [ -z "$choice" ]; then model=$default; break; fi
-    if [[ "$choice" =~ ^[0-9]+$ ]]; then model=$(echo "$options" | sed -n "${choice}p"); [ -n "$model" ] && break; fi
-    echo "Please type one of the numbers above, or press Enter."
+    if [ -z "$choice" ]; then model=$default
+    elif [[ "$choice" =~ ^[0-9]+$ ]] && [ -n "$(echo "$options" | sed -n "${choice}p")" ]; then model=$(echo "$options" | sed -n "${choice}p")
+    else echo "Please type one of the numbers above, or press Enter."; continue
+    fi
+    printf "Testing %s... " "$model"
+    result=$(test_model "$model"); echo "$result"
+    [ "$result" = "ok" ] && break
+    read -rp "Use it anyway? [y/N] " anyway
+    [[ "$anyway" =~ ^[yY] ]] && break
+    echo "Pick another number."
   done
   set_var GEMINI_MODEL "$model"
-  echo "Key works. Agents will use $model."
+  echo "Agents will use $model."
 else
   echo "No Gemini key: the investigator will say it isn't configured, and the curator uses its rule-based version."
 fi
