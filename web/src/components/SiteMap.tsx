@@ -1,4 +1,5 @@
-import { memo, useEffect, useRef, type RefObject } from 'react';
+import { memo, useEffect, useMemo, useRef, type RefObject } from 'react';
+import { bathymetryImage, riskFieldImage } from '../lib/fieldImages';
 import { ANGLE_SECTORS, SECTOR_DEG, TODAY, cellCol, type Finding, type World } from '../data/model';
 import { riskColor } from '../lib/layers';
 import type { PenSummary } from '../lib/summary';
@@ -15,6 +16,8 @@ interface Props {
   focusPen: number | null;
   drones: Drone[];
   selectedDrone: string | null;
+  /** "chart": risk as rings on the pens. "heat": a bathymetric chart with risk as a field over the water. */
+  variant: 'chart' | 'heat';
   onSelectDrone: (id: string) => void;
 }
 
@@ -84,7 +87,7 @@ const BARGE: [number, number] = [84, 520];
 const COAST = 'M-3000,-3000H4000V40H1000C900,66 820,30 700,56C590,80 520,44 420,70C320,96 250,58 170,92C110,118 50,156 0,196H-3000Z';
 
 /** Top-down farm view drawn like a sea chart; each pen is a ring coloured by the worst hole risk on each side of its net. */
-export const SiteMap = memo(function SiteMap({ world, day, summaries, open, onOpenPen, focusPen, drones, selectedDrone, onSelectDrone }: Props) {
+export const SiteMap = memo(function SiteMap({ world, day, summaries, open, onOpenPen, focusPen, drones, selectedDrone, onSelectDrone, variant }: Props) {
   const speed = world.env.currentSpeed[day];
   const dir = world.env.currentDir[day];
   const live = day === TODAY;
@@ -120,6 +123,19 @@ export const SiteMap = memo(function SiteMap({ world, day, summaries, open, onOp
   }, [live, drones]);
   const focusKey = focusPen === null ? 'site' : `${centers[focusPen][0]},${centers[focusPen][1]}`;
   const target = useMemoBox(focusKey);
+  const heat = variant === 'heat';
+  const bathymetry = useMemo(() => (heat ? bathymetryImage() : null), [heat]);
+  const riskField = useMemo(
+    () =>
+      heat
+        ? riskFieldImage(
+            summaries.map((s, i) => ({ cx: centers[i][0], cy: centers[i][1], radius: R, sectorRisk: s.sectorRisk })),
+            { x: 0, y: 80, width: 960, height: 500 },
+          )
+        : null,
+    // The pen centres are fixed for a given world, so only the risk and the variant matter.
+    [heat, summaries],
+  );
   useViewBoxTween(svgRef, target);
 
   return (
@@ -135,6 +151,7 @@ export const SiteMap = memo(function SiteMap({ world, day, summaries, open, onOp
       </defs>
 
       <rect x={-3000} y={-3000} width={7000} height={7000} fill={color.sea} />
+      {bathymetry && <image href={bathymetry.href} x={bathymetry.x} y={bathymetry.y} width={bathymetry.width} height={bathymetry.height} preserveAspectRatio="none" />}
       <path d={COAST} fill={color.land} stroke={color.coast} strokeWidth={1.2} />
 
       {/* North arrow */}
@@ -156,6 +173,8 @@ export const SiteMap = memo(function SiteMap({ world, day, summaries, open, onOp
           return <line key={`${i}-${j}`} x1={x0} y1={y0} x2={x1} y2={y1} stroke={color.signal} strokeOpacity={0.45} strokeWidth={1.2} markerEnd="url(#arrowhead)" />;
         }),
       )}
+
+      {riskField && <image href={riskField.href} x={riskField.x} y={riskField.y} width={riskField.width} height={riskField.height} preserveAspectRatio="none" style={{ mixBlendMode: 'multiply' }} />}
 
       {/* Feed lines and moorings */}
       {centers.map(([cx, cy], i) => (
@@ -200,12 +219,17 @@ export const SiteMap = memo(function SiteMap({ world, day, summaries, open, onOp
             }}
           >
             <circle className="focus-ring" cx={cx} cy={cy} r={R + 8} fill="none" stroke="transparent" strokeWidth={2} />
-            <circle cx={cx} cy={cy} r={R} fill={color.paper} />
+            {heat ? (
+              <circle cx={cx} cy={cy} r={R} fill={color.paper} fillOpacity={0.25} />
+            ) : (
+              <circle cx={cx} cy={cy} r={R} fill={color.paper} />
+            )}
             {Array.from({ length: ANGLE_SECTORS }, (_, k) => {
               const d = arc(cx, cy, R - 13, R, k * SECTOR_DEG + 0.6, (k + 1) * SECTOR_DEG - 0.6);
               return (
                 <g key={k}>
-                  <path d={d} fill={riskColor(s.sectorRisk[k])} />
+                  {/* In the heat version the field carries the risk; stale sides stay hatched either way. */}
+                  {!heat && <path d={d} fill={riskColor(s.sectorRisk[k])} />}
                   {s.sectorStale[k] === 1 && <path d={d} fill="url(#hatch)" />}
                 </g>
               );

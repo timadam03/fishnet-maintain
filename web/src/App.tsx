@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { DAYS, STORM_FORECAST_DAY, TODAY, cellLabel, type World } from './data/model';
 import { generateWorld } from './data/simulate';
 import { CellPanel, DronePanel, FindingPanel, PenPanel, SitePanel } from './components/SidePanel';
@@ -6,11 +6,32 @@ import { swarmState } from './data/swarm';
 import { Legend } from './components/Legend';
 import { PenView } from './components/PenView';
 import { SiteMap } from './components/SiteMap';
+import { NetAtlas } from './components/NetAtlas';
 import { TimeBar } from './components/TimeBar';
 import { layerById } from './lib/layers';
 import { fromHash, initialState, openFindings, reducer, statusAt, toHash } from './lib/state';
 import { riskShareSeries, summarisePen, topRiskAreas } from './lib/summary';
 import { THEMES, color, type ThemeId } from './lib/tokens';
+
+const SiteScene3D = lazy(() => import('./components/SiteScene3D'));
+
+/** Alternative ways to draw the site level, switchable for comparison. */
+type SiteVersion = 'chart' | 'heat' | 'atlas' | 'site3d';
+const VERSIONS: Array<{ id: SiteVersion; short: string; name: string }> = [
+  { id: 'chart', short: 'V1', name: 'Chart: pens as risk rings' },
+  { id: 'heat', short: 'V2', name: 'Heat field over a bathymetric chart' },
+  { id: 'atlas', short: 'V3', name: 'Net atlas: every net as a disc' },
+  { id: 'site3d', short: 'V4', name: '3D site' },
+];
+const VERSION_KEY = 'shoal-version';
+function loadVersion(): SiteVersion {
+  try {
+    const v = window.localStorage.getItem(VERSION_KEY);
+    return VERSIONS.some((x) => x.id === v) ? (v as SiteVersion) : 'chart';
+  } catch {
+    return 'chart';
+  }
+}
 
 const world: World = generateWorld();
 const stormSummaries = world.pens.map((_, i) => summarisePen(world, i, STORM_FORECAST_DAY));
@@ -24,6 +45,15 @@ const siteShare = riskShareSeries(
 export default function App({ theme, onTheme }: { theme: ThemeId; onTheme: (id: ThemeId) => void }) {
   const [state, dispatch] = useReducer(reducer, initialState, (s) => ({ ...s, ...fromHash(window.location.hash, world.pens.length) }));
   const { penIndex, cell, findingId, day, layer, playing, reviews } = state;
+  const [version, setVersion] = useState<SiteVersion>(loadVersion);
+  const chooseVersion = (v: SiteVersion): void => {
+    setVersion(v);
+    try {
+      window.localStorage.setItem(VERSION_KEY, v);
+    } catch {
+      // Not remembering the version only means the default next time.
+    }
+  };
 
   const summaries = useMemo(() => world.pens.map((_, i) => summarisePen(world, i, day)), [day]);
   const open = useMemo(() => openFindings(world, day, reviews), [day, reviews]);
@@ -139,6 +169,13 @@ export default function App({ theme, onTheme }: { theme: ThemeId; onTheme: (id: 
           ))}
         </nav>
         <div className="spacer" />
+        <div className="segmented theme-switch" role="group" aria-label="Site version">
+          {VERSIONS.map((v) => (
+            <button key={v.id} data-text={v.short} aria-pressed={v.id === version} title={v.name} onClick={() => chooseVersion(v.id)}>
+              {v.short}
+            </button>
+          ))}
+        </div>
         <div className="segmented theme-switch" role="group" aria-label="Colour theme">
           {THEMES.map((t) => (
             <button key={t.id} data-text={t.short} aria-pressed={t.id === theme} title={t.name} onClick={() => onTheme(t.id)}>
@@ -158,11 +195,34 @@ export default function App({ theme, onTheme }: { theme: ThemeId; onTheme: (id: 
       </header>
 
       <main className="stage">
-        <SiteMap world={world} day={day} summaries={summaries} open={open} onOpenPen={(i) => dispatch({ type: 'pen', penIndex: i })} focusPen={penIndex}
-          drones={drones}
-          selectedDrone={state.droneId}
-          onSelectDrone={(id) => dispatch({ type: 'drone', id })}
-        />
+        {(version === 'chart' || version === 'heat') && (
+          <SiteMap
+            world={world}
+            day={day}
+            summaries={summaries}
+            open={open}
+            onOpenPen={(i) => dispatch({ type: 'pen', penIndex: i })}
+            focusPen={penIndex}
+            drones={drones}
+            selectedDrone={state.droneId}
+            onSelectDrone={(id) => dispatch({ type: 'drone', id })}
+            variant={version}
+          />
+        )}
+        {version === 'atlas' && !pen && <NetAtlas world={world} day={day} layerId={layer} open={open} dispatch={dispatch} />}
+        {version === 'site3d' && !pen && (
+          <Suspense fallback={<p className="stage-hint">Loading 3D site…</p>}>
+            <SiteScene3D
+              world={world}
+              day={day}
+              live={day === TODAY}
+              open={open}
+              drones={drones}
+              onOpenPen={(i) => dispatch({ type: 'pen', penIndex: i })}
+              onSelectDrone={(id) => dispatch({ type: 'drone', id })}
+            />
+          </Suspense>
+        )}
         {pen && penIndex !== null ? (
           <PenView
             key={penIndex}
@@ -179,7 +239,7 @@ export default function App({ theme, onTheme }: { theme: ThemeId; onTheme: (id: 
             selectedDrone={state.droneId}
             dispatch={dispatch}
           />
-        ) : (
+        ) : version === 'chart' || version === 'heat' || version === 'site3d' ? (
           <>
             <p className="stage-hint" style={{ top: 16, bottom: 'auto' }}>
               {day > TODAY ? 'Forecast: predicted from weather and current forecasts, not measured.' : 'Select a pen to zoom in.'}
@@ -188,7 +248,7 @@ export default function App({ theme, onTheme }: { theme: ThemeId; onTheme: (id: 
               <Legend layer={layerById('risk')} />
             </div>
           </>
-        )}
+        ) : null}
         <div className="timebar">
           <TimeBar day={day} playing={playing} operations={world.operations} findings={world.findings} penId={pen?.id ?? null} dispatch={dispatch} />
         </div>

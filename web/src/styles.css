@@ -964,3 +964,58 @@ h3 {
   padding: 2px 8px;
   font-size: 12px;
 }
+
+/* ---------- Site version 3: net atlas ---------- */
+
+.atlas {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  background: var(--page);
+}
+
+.atlas-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, max-content));
+  justify-content: center;
+  gap: 24px 36px;
+  padding: 76px 24px 180px;
+}
+
+.atlas-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border: 0;
+  border-radius: 16px;
+  background: transparent;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .atlas-item:hover {
+    background: var(--signal-soft);
+  }
+}
+
+.atlas-caption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.atlas-name {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.atlas-meta {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.scene-label.site-label {
+  margin: -34px 0 0 -10px;
+  font-weight: 600;
+}
