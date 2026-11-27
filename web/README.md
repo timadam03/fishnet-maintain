@@ -66,7 +66,7 @@ All data is **synthetic** (a seeded simulation), and the top bar says "Demo data
   heavy fouling patch near the surface and a thin spot at 15–17.5 m.
 - **Today, Pen 6 (`#pen=6`):** a likely opening (76 %) seen once; two drones confirm it from either side (P1).
 - **Today, Pen 5 (`#pen=5`):** an unsure possible opening (55 %) gets a closer look (P2), next to a thin spot.
-- **Today, fouling and thin spots:** fouling patches the cleaner misses in Pens 1, 2, 4, 6 and 8 (Fouling
+- **Today, fouling and thin spots:** fouling patches the cleaner misses in Pens 1, 2, 4, 6 and 8 (olive growth on the net, and the Fouling
   layer), thin twine in Pens 1, 3, 5 and 8 (Condition and Hole risk layers).
 - **History, Pen 4 (`#pen=4&cell=105&day=51`):** chafe from a weight rope was flagged at high risk and
   fixed before a twine broke.

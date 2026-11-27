@@ -25,6 +25,8 @@ export const environment = {
   surfaceOpacity: 0.2,
   /** HDPE floating collars are dark grey-black on real farms. */
   collar: '#3a4144',
+  /** Marine growth (fouling) as it looks on a net: olive brown. */
+  growth: '#6b6a3a',
   collarHover: '#55767e',
 };
 

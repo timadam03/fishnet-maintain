@@ -50,8 +50,9 @@ const PEN7_SAG_CELL = cellIndex(WALL_ROWS - 1, 20);
  *   a seam in the way). Heavy fouling adds drag and can hide damage.
  * - `thin`: twine worn thin, just below the level where the vision model flags it. Only the risk
  *   map shows it, which is the point of prevention.
- * - `openings`: small openings in the mesh. `confirmed` ones are reviewed and sent to the service
- *   crew; the others are "possible openings" seen once and waiting for a second look.
+ * - `openings`: small openings in the mesh. `confirmed` ones are holes, reviewed and sent to the
+ *   service crew. The others are "possible openings" seen once and waiting for a second look; the
+ *   simulation keeps them as twine worn almost through, so their risk is high but not certain.
  * Findings from these get ids after the regular ones (#209 on), so earlier finding ids stay fixed.
  */
 interface Seeds {
@@ -199,7 +200,7 @@ function simulatePen(pen: Pen, env: SiteEnv, seed: number, findings: Finding[], 
   for (let c = 0; c < CELLS; c++) {
     for (const f of seeds.fouling ?? []) {
       const w = patchWeight(c, f.row, f.col, f.size);
-      foulGrowth[c] += 2.5 * w;
+      foulGrowth[c] += 4 * w;
       cleanerMiss[c] = Math.max(cleanerMiss[c], w);
     }
     for (const t of seeds.thin ?? []) {
@@ -359,7 +360,7 @@ function simulatePen(pen: Pen, env: SiteEnv, seed: number, findings: Finding[], 
       let passes = 0;
       if (cleaningToday && row < WALL_ROWS) {
         passes = pen.passesPerCleaning + (face > 0.6 ? 1 : 0);
-        foul[c] *= 0.2 + 0.7 * cleanerMiss[c];
+        foul[c] *= 0.2 + 0.75 * cleanerMiss[c];
       }
 
       const depthShelter = row < WALL_ROWS ? 1 - row * 0.04 : 0.6;
@@ -408,10 +409,21 @@ function simulatePen(pen: Pen, env: SiteEnv, seed: number, findings: Finding[], 
     if (day === OPENING_DAY) {
       for (const o of seeds.openings ?? []) {
         const c = cellIndex(o.row, o.col);
-        fray[c] = 1;
-        hole[c] = 1;
-        holeOpenedDay[c] = day;
-        sim.fray[base + c] = 1;
+        if (o.confirmed) {
+          fray[c] = 1;
+          hole[c] = 1;
+          holeOpenedDay[c] = day;
+          sim.fray[base + c] = 1;
+        } else {
+          // Not (yet) a known hole: twine worn almost through, which is what the camera picked up.
+          // If the review rejects it, the area still reads as badly worn, not as a hole.
+          fray[c] = 0.9;
+          coat[c] = Math.max(coat[c], 0.8);
+          dist[c] = Math.max(dist[c], 0.5);
+          sim.fray[base + c] = fray[c];
+          sim.coating[base + c] = coat[c];
+          sim.distortion[base + c] = dist[c];
+        }
       }
     }
     if (day === OPENING_DAY) {

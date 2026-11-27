@@ -24,11 +24,17 @@ The other seven pens stay simulated. The dashboard says which is which (a "Live 
 ## What already lines up
 
 - **Same grid.** The dashboard's cells are the contract's cells: 24 sectors × 8 wall rows,
-  `cell = row * 24 + col`. The sim's 24 × 3 rows land on rows 0–2 (0–7.5 m in 2.5 m bands).
-  The dashboard also has 3 cone rows (20–30 m) the sim doesn't model; they stay unobserved.
+  `cell = row * 24 + col`. As built, the sim maps its whole 8 m cage onto all 8 wall rows, with
+  depth as a fraction of the wall (`ground_truth.json`: `cage_radius_m: 8`, `cage_depth_m: 8`), so
+  sim row 4 is about 4 m deep in Isaac and 10–12.5 m on the dashboard. That differs from the
+  "top 8 m of a real pen" idea (rows 0–2, true depths); which one to keep is open decision 6. The
+  dashboard's 3 cone rows (20–30 m) aren't in the sim either way and stay unobserved.
 - **Same rules.** The simulated swarm in `src/data/swarm.ts` now uses the plan rules (P1 two drones on
   a possible opening, P2 closer, P4 two angles through fouling, P5 wear, P6 high risk; a confirmed
   hole leaves the plan). So swapping in the real plan changes the data, not the UI.
+- **Branches.** The decision layer on `feat/decision-layer` carries its own, older copy of
+  `web/src/data`, so the problem areas added here (and the plan-rule swarm) only reach it once the
+  branches are merged. Its tests pass against this branch's simulation (22/22, checked 2026-11-28).
 - **Decision layer API** (`decision-layer/src/server.ts`, port 8787): `GET /api/plan?pen=7`,
   `GET /api/missions?pen=7`, `GET /api/alerts`, `POST /api/observations`, `GET /api/health`.
 
@@ -70,3 +76,5 @@ For the dashboard:
 4. Should the dashboard only show the loop, or also start it (an "Approve plan" button that posts
    to the decision layer)? Showing only is less work and keeps people in charge of approvals.
 5. Where are run images served from during the demo?
+6. Sim depth: keep mapping the 8 m cage onto the full 20 m wall (as built), or treat it as the
+   top 8 m of a real pen so depths stay true (rows 0–2)?

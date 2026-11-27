@@ -70,6 +70,8 @@ export function PenView({ world, penIndex, day, layerId, cell, view, sliceDepth,
   const penDrones = useMemo(() => drones.filter((d) => d.penIndex === penIndex), [drones, penIndex]);
   const selectDrone = useCallback((id: string): void => dispatch({ type: 'drone', id }), [dispatch]);
   const grid = useMemo(() => computeLayerGrid(world, penIndex, day, layerId), [world, penIndex, day, layerId]);
+  // Heavy fouling is drawn on the net as growth, except on the fouling layer, which shows it as data.
+  const growth = useMemo(() => (layerId === 'fouling' ? undefined : computeLayerGrid(world, penIndex, day, 'fouling').values), [world, penIndex, day, layerId]);
   const layer = useMemo(() => fitLayer(layerById(layerId), grid.values), [layerId, grid]);
   const pen = world.pens[penIndex];
   const currentDir = world.env.currentDir[day];
@@ -142,6 +144,7 @@ export function PenView({ world, penIndex, day, layerId, cell, view, sliceDepth,
               selectedCell={cell}
               findings={findings}
               holeIds={holeIds}
+              growth={growth}
               currentDir={currentDir}
               currentSpeed={world.env.currentSpeed[day]}
               drones={penDrones}

@@ -5,6 +5,8 @@
  */
 import { ANGLE_SECTORS, CELLS, ROWS, cellCol, cellRow, type Finding } from '../data/model';
 import { cellColor, type LayerDef, type LayerGrid } from './layers';
+import { hashNoise } from '../data/rng';
+import { environment } from './environment';
 import { color } from './tokens';
 
 /** Number of colour bands; values are smoothed first, then banded, which draws soft contour lines. */
@@ -157,7 +159,32 @@ export function drawHole(ctx: CanvasRenderingContext2D, x: number, y: number, r:
  * Paints the whole net (wall rows then cone rows) as one rectangle: angle across, depth down.
  * This is the 3D texture; the unrolled map draws the wall from it and the cone separately.
  */
-export function paintNetTexture(canvas: HTMLCanvasElement, grid: LayerGrid, layer: LayerDef, holes: Finding[]): void {
+/** Fouling above this shows as growth on the net itself, whatever layer is on. */
+const GROWTH_FROM = 0.72;
+
+/**
+ * Heavy fouling drawn the way it looks on a net: soft olive blotches. Physical appearance, not a
+ * data colour, so it can sit on top of any layer.
+ */
+function drawGrowth(ctx: CanvasRenderingContext2D, fouling: ArrayLike<number>, cw: number, ch: number): void {
+  ctx.fillStyle = environment.growth;
+  for (let c = 0; c < CELLS; c++) {
+    const amount = (fouling[c] - GROWTH_FROM) / (1 - GROWTH_FROM);
+    if (amount <= 0) continue;
+    const x0 = cellCol(c) * cw;
+    const y0 = cellRow(c) * ch;
+    for (let k = 0; k < 18; k++) {
+      ctx.globalAlpha = 0.3 + 0.45 * Math.min(1, amount * 1.5) * hashNoise(c, k, 5);
+      ctx.beginPath();
+      ctx.ellipse(x0 + hashNoise(c, k, 1) * cw, y0 + hashNoise(c, k, 2) * ch, (0.12 + 0.2 * hashNoise(c, k, 3)) * cw, (0.1 + 0.18 * hashNoise(c, k, 4)) * ch, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+/** @param fouling per-cell fouling, drawn as growth on the net (leave out on the fouling layer itself). */
+export function paintNetTexture(canvas: HTMLCanvasElement, grid: LayerGrid, layer: LayerDef, holes: Finding[], fouling?: ArrayLike<number>): void {
   const w = canvas.width;
   const h = canvas.height;
   const ctx = canvas.getContext('2d');
@@ -176,6 +203,7 @@ export function paintNetTexture(canvas: HTMLCanvasElement, grid: LayerGrid, laye
     ctx.fillStyle = pattern;
     for (let c = 0; c < CELLS; c++) if (grid.stale[c]) ctx.fillRect(cellCol(c) * cw, cellRow(c) * ch, cw, ch);
   }
+  if (fouling) drawGrowth(ctx, fouling, cw, ch);
   drawMesh(ctx, 0, 0, w, h, Math.max(6, cw / 4));
   for (const f of holes) drawHole(ctx, (cellCol(f.cell) + 0.5) * cw, (cellRow(f.cell) + 0.5) * ch, Math.min(cw, ch) * 0.32);
 }

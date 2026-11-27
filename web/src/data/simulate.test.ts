@@ -100,3 +100,31 @@ describe('water inside the pen', () => {
     expect(leave).toBeLessThan(enter);
   });
 });
+
+describe('scripted problem areas', () => {
+  it('keeps the regular findings and their ids fixed; the decision layer refers to them by id', () => {
+    const regular = world.findings.filter((f) => f.id <= 208).map((f) => `${f.id} ${f.penId}/${f.cell} ${f.kind} d${f.detectedDay}`);
+    expect(regular).toEqual([
+      '201 3/156 fraying d21',
+      '202 4/105 fraying d45',
+      '203 4/105 chafe d51',
+      '204 5/183 fraying d64',
+      '205 3/210 fraying d79',
+      '206 5/185 fraying d84',
+      '207 2/65 hole d88',
+      '208 7/188 fraying d89',
+    ]);
+  });
+
+  it('adds one confirmed opening and two possible openings today, numbered after the regular ones', () => {
+    const today = world.findings.filter((f) => f.id >= 209);
+    expect(today.every((f) => f.detectedDay === TODAY && f.kind === 'hole')).toBe(true);
+    expect(today.map((f) => f.steps.at(-1)!.status).sort()).toEqual(['unreviewed', 'unreviewed', 'work-order']);
+  });
+
+  it('keeps a possible opening out of the known holes, so rejecting it is possible', () => {
+    for (const f of world.findings.filter((x) => x.id >= 209 && x.steps.at(-1)!.status === 'unreviewed')) {
+      expect(world.sims[f.penId - 1].holeOpen[TODAY * CELLS + f.cell]).toBe(0);
+    }
+  });
+});

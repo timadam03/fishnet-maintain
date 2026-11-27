@@ -22,6 +22,8 @@ interface Props {
   live: boolean;
   /** Confirmed open holes, drawn on the nets and pinned with "!". */
   holes: Finding[];
+  /** Possible openings waiting for a second look, pinned with a triangle. */
+  openings: Finding[];
   drones: Drone[];
   /** The pen the user opened: the camera flies down into it, then the pen view takes over. */
   focusPen: number | null;
@@ -57,7 +59,7 @@ interface SceneCtx {
   controls: OrbitControls;
 }
 
-export default function SiteScene3D({ world, day, live, holes, drones, focusPen, penRisk, onOpenPen, onSelectDrone }: Props) {
+export default function SiteScene3D({ world, day, live, holes, openings, drones, focusPen, penRisk, onOpenPen, onSelectDrone }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const labelsRef = useRef<HTMLDivElement>(null);
   const ctx = useRef<SceneCtx | null>(null);
@@ -333,6 +335,7 @@ export default function SiteScene3D({ world, day, live, holes, drones, focusPen,
         grid,
         layer,
         holes.filter((f) => f.penId === world.pens[i].id),
+        computeLayerGrid(world, i, day, 'fouling').values,
       );
       texture.needsUpdate = true;
     });
@@ -420,8 +423,14 @@ export default function SiteScene3D({ world, day, live, holes, drones, focusPen,
         {world.pens.map((p, i) => {
           const penHoles = holes.filter((f) => f.penId === p.id).length;
           const r = penRisk[i] ?? 0;
-          const kind = penHoles ? 'hole' : r >= 0.5 ? 'high' : null;
-          const title = penHoles ? `${p.name}: hole open` : kind ? `${p.name}: high hole risk (${Math.round(r * 100)})` : p.name;
+          const penOpenings = openings.filter((f) => f.penId === p.id).length;
+          const kind = penHoles ? 'hole' : penOpenings || r >= 0.5 ? 'high' : null;
+          const title = penHoles
+            ? `${p.name}: hole open`
+            : penOpenings
+              ? `${p.name}: possible opening to confirm`
+              : kind
+                ? `${p.name}: high hole risk (${Math.round(r * 100)})` : p.name;
           return (
             <span key={p.id} className="site-marker" title={title}>
               {kind && (

@@ -96,6 +96,8 @@ function rankedCells(world: World, day: number, unreviewed: Finding[]): Candidat
     for (let cell = 0; cell < CELLS; cell++) {
       // Same gap as in the simulation: only the docked drone could film Pen 8's cone.
       if (pen.id === 8 && day >= CONE_DRONE_DOCKED_DAY && cellRow(cell) >= WALL_ROWS) continue;
+      // A known hole is the repair crew's job, not the swarm's.
+      if (sim.holeOpen[day * CELLS + cell]) continue;
       const age = coverageAge(sim, cell, day);
       const risk = riskScore(sim, cell, day);
       const fouling = sim.fouling[day * CELLS + cell];

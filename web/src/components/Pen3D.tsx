@@ -37,6 +37,8 @@ interface Props {
   findings: Finding[];
   /** Ids of confirmed holes; other hole findings are possible openings, drawn like wear. */
   holeIds: ReadonlySet<number>;
+  /** Per-cell fouling to draw as growth on the net, or undefined on the fouling layer. */
+  growth?: ArrayLike<number>;
   /** Direction the current flows towards, degrees, and its speed in cm/s. */
   currentDir: number;
   currentSpeed: number;
@@ -168,6 +170,7 @@ export default function Pen3D({
   selectedCell,
   findings,
   holeIds,
+  growth,
   currentDir,
   currentSpeed,
   drones,
@@ -476,10 +479,11 @@ export default function Pen3D({
       grid,
       layer,
       findings.filter((f) => holeIds.has(f.id)),
+      growth,
     );
     c.texture.needsUpdate = true;
     c.render();
-  }, [grid, layer, findings, holeIds]);
+  }, [grid, layer, findings, holeIds, growth]);
 
   // Selection outline.
   useEffect(() => {

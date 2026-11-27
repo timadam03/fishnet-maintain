@@ -35,6 +35,7 @@ export default function App() {
   // Detections nobody has reviewed yet get a targeted second look from the swarm.
   const unreviewed = useMemo(() => open.filter((f) => statusAt(f, day, reviews) === 'unreviewed'), [open, day, reviews]);
   const drones = useMemo(() => swarmState(world, day, unreviewed), [day, unreviewed]);
+  const openings = useMemo(() => unreviewed.filter((f) => f.kind === 'hole'), [unreviewed]);
   const drone = state.droneId === null ? null : (drones.find((d) => d.id === state.droneId) ?? null);
   const penOpen = useMemo(() => (pen ? open.filter((f) => f.penId === pen.id) : []), [open, pen]);
 
@@ -121,7 +122,7 @@ export default function App() {
     <div className="app">
       <main className="stage" style={{ background: `linear-gradient(180deg, ${environment.sky} 0%, ${environment.haze} 55%)` }}>
         <Suspense fallback={<p className="stage-hint">Loading 3D site…</p>}>
-          <SiteScene3D world={world} day={day} live={day === TODAY} holes={holes} drones={drones} focusPen={penIndex} penRisk={penRisk} onOpenPen={openPen} onSelectDrone={selectDrone} />
+          <SiteScene3D world={world} day={day} live={day === TODAY} holes={holes} openings={openings} drones={drones} focusPen={penIndex} penRisk={penRisk} onOpenPen={openPen} onSelectDrone={selectDrone} />
         </Suspense>
         {pen && penIndex !== null && (
           <PenView
