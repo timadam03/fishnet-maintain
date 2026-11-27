@@ -7,6 +7,7 @@ in the repo's Python 3.10 venv (it reuses finrl.ppo, so no new dependencies):
 
     python train_fishfarm_nav.py --total-steps 300000 --cbf            # level 3 (recommended)
     python train_fishfarm_nav.py --total-steps 300000 --w-safety 2     # level 1, for comparison
+    python train_fishfarm_nav.py --total-steps 300000 --cbf --cbf-reward 0.3   # HOCBF in reward + hard filter
     python train_fishfarm_nav.py --selftest                            # env + filter check, no training
 
 Outputs  fishfarm_nav.pt  (torch state_dict)  and  fishfarm_nav.npz  (numpy weights + config,
@@ -29,11 +30,12 @@ import safe_nav as sn
 
 
 class FishFarmNavEnv:
-    def __init__(self, cfg, use_cbf=True, w_safety=0.0, max_obstacles=6, seed=0,
+    def __init__(self, cfg, use_cbf=True, w_safety=0.0, max_obstacles=6, seed=0, w_cbf_reward=0.0,
                  max_current=0.2, max_steps=400):
         self.cfg = cfg
         self.rng = np.random.default_rng(seed)
         self.use_cbf, self.w_safety = use_cbf, w_safety
+        self.w_cbf_reward = w_cbf_reward     # HOCBF-in-reward weight (0 = off)
         self.max_obstacles, self.max_current, self.max_steps = max_obstacles, max_current, max_steps
         self.obs_dim, self.act_dim = 5 + cfg["n_rays"], 2
         self.filter = sn.SafetyFilter(cfg["a_max"], cfg["drag"], cfg["alpha1"], cfg["alpha2"],
@@ -92,9 +94,15 @@ class FishFarmNavEnv:
         c = self.cfg
         u = np.clip(np.asarray(action, float).reshape(-1)[:2], -1, 1)
         info = {}
-        if self.use_cbf:
-            u, cbf_info = self.filter.filter(self.p, self.v, u, self.circles)
+        u_policy = u.copy()
+        cbf_edit = 0.0
+        if self.use_cbf or self.w_cbf_reward > 0:
+            # what the HOCBF would let through for the policy's own action
+            u_safe, cbf_info = self.filter.filter(self.p, self.v, u, self.circles)
+            cbf_edit = float(np.sum((u_safe - u_policy) ** 2))    # 0 = policy already respects every barrier
             info["cbf"] = cbf_info
+            if self.use_cbf:                                      # hard filter: execute the safe action
+                u = u_safe
         a = c["a_max"] * u
         self.v = self.v + (a - c["drag"] * self.v) * c["dt"]
         self.p = self.p + (self.v + self.current) * c["dt"]
@@ -115,6 +123,10 @@ class FishFarmNavEnv:
         elif self.steps >= self.max_steps:
             done = True
         reward -= self.w_safety * max(0.0, self.safety_buffer + margin - clr)
+        # HOCBF in the reward: penalise the policy for proposing an action the barrier has to correct.
+        # The policy learns to respect h >= 0 by itself; with --cbf the filter stays on as the hard guarantee.
+        reward -= self.w_cbf_reward * cbf_edit
+        info["cbf_edit"] = cbf_edit
         return self._obs(), float(reward), bool(done), info
 
     def close(self):
@@ -164,6 +176,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--total-steps", type=int, default=300_000)
     ap.add_argument("--cbf", action="store_true", help="level 3: HOCBF filter during training")
+    ap.add_argument("--cbf-reward", type=float, default=0.0,
+                    help="HOCBF in the reward: weight on how much the filter must edit the policy's action "
+                         "(e.g. 0.3). Combine with --cbf for learned avoidance + hard guarantee")
     ap.add_argument("--w-safety", type=float, default=0.0, help="level 1 soft clearance penalty")
     ap.add_argument("--max-obstacles", type=int, default=6)
     ap.add_argument("--out", default="fishfarm_nav")
@@ -185,8 +200,11 @@ def main():
     import torch
     from finrl.ppo import PPO, PPOConfig
 
-    env = FishFarmNavEnv(cfg, use_cbf=args.cbf, w_safety=args.w_safety, max_obstacles=args.max_obstacles)
+    env = FishFarmNavEnv(cfg, use_cbf=args.cbf, w_safety=args.w_safety, max_obstacles=args.max_obstacles,
+                         w_cbf_reward=args.cbf_reward)
     tag = "level3-HOCBF" if args.cbf else ("level1-soft" if args.w_safety > 0 else "level0-none")
+    if args.cbf_reward > 0:
+        tag += f"+cbf-reward{args.cbf_reward:g}"
     print(f"[fishfarm-nav] {tag}  cfg={cfg}")
     ppo = PPO(env, PPOConfig(total_steps=args.total_steps, rollout_len=2048, ent_coef=0.01, hidden=(256, 256)))
     ppo.train(log_every=5)
@@ -198,6 +216,12 @@ def main():
             return torch.clamp(mu(torch.as_tensor(obs, dtype=torch.float32)), -1, 1).numpy()
     r = evaluate(env, act, 100)
     print(f"\n[eval 100 eps | {tag} | deterministic] " + ", ".join(f"{k}={v:.3f}" for k, v in r.items()))
+    if args.cbf:   # how good is the learned policy on its own, filter OFF?
+        env.use_cbf = False
+        r_raw = evaluate(env, act, 100)
+        env.use_cbf = True
+        print("[eval 100 eps | same policy, filter OFF] " + ", ".join(f"{k}={v:.3f}" for k, v in r_raw.items()))
+        r["policy_alone"] = r_raw
     cfg_out = dict(cfg, trained_with_cbf=bool(args.cbf), eval=r)
     export_npz(mu, cfg_out, args.out + ".npz")
     print(f"[done] {args.out}.pt + {args.out}.npz  ->  fishfarm_demo.py --nav-policy {args.out}.npz")

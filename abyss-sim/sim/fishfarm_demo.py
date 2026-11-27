@@ -983,7 +983,8 @@ if args.record:
                          "/rtx/pathtracing/optixDenoiser/enabled": True}.items():
             settings.set(key, val)
     W, H = (int(v) for v in args.record_res.lower().split("x"))
-    REC = {"dir": args.record, "cams": {}, "frame": 0, "shots": []}
+    from concurrent.futures import ThreadPoolExecutor
+    REC = {"dir": args.record, "cams": {}, "frame": 0, "shots": [], "pool": ThreadPoolExecutor(max_workers=6)}
     for name in [c.strip() for c in args.record_cams.split(",") if c.strip()]:
         path = {"demo": "/World/DemoCam", "section": "/World/SectionCam"}.get(name) or cam_paths[int(name[-1])]
         res = (W, H) if name in ("demo", "section") else RES
@@ -1008,6 +1009,10 @@ if args.record:
     print(f"[rec] recording {list(REC['cams'])} to {os.path.abspath(args.record)} at {60 / args.record_every:.0f} fps")
 
 
+def _save_png(frame, path):
+    Image.fromarray(frame).save(path, compress_level=1)          # fast PNG; written off the sim thread
+
+
 def record_frame(t, pos):
     REC["frame"] += 1
     if REC["frame"] % args.record_every:
@@ -1017,7 +1022,8 @@ def record_frame(t, pos):
         data = ann.get_data()
         if data is None or getattr(data, "size", 0) == 0:
             return
-        Image.fromarray(np.asarray(data)[:, :, :3]).save(os.path.join(REC["dir"], name, f"{idx:05d}.png"))
+        frame = np.array(np.asarray(data)[:, :, :3], copy=True)   # copy: the buffer is reused next frame
+        REC["pool"].submit(_save_png, frame, os.path.join(REC["dir"], name, f"{idx:05d}.png"))
     rov = []
     for k in range(N_AUV):
         q = np.asarray(quat[k], float)
@@ -1085,6 +1091,9 @@ while simulation_app.is_running():
     pos, quat = auvs.get_world_poses()
     if REC is not None:
         record_frame(t, pos)
+        if REC["frame"] % 300 == 0:
+            print(f"[rec] sim t = {t:6.1f} s, {REC['frame'] // args.record_every} frames recorded, "
+                  f"photos so far {sum(counts)}")
     if diver_ops is not None:
         dxy, dvel = diver_state(t)
         diver_ops[0].Set(Gf.Vec3d(float(dxy[0]), float(dxy[1]), DIVER_Z))
@@ -1180,4 +1189,7 @@ while simulation_app.is_running():
 meta_file.close()
 if REC is not None:
     REC["tel"].close()
+    print("[rec] finishing frame writes...")
+    REC["pool"].shutdown(wait=True)
+    print(f"[rec] done: {os.path.abspath(args.record)}  ->  run tools/make_video.py on it")
 simulation_app.close()
