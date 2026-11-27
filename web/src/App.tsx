@@ -1,15 +1,19 @@
-import { useEffect, useMemo, useReducer, useRef } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
+import { environment } from './lib/environment';
 import { DAYS, STORM_FORECAST_DAY, TODAY, cellLabel, type World } from './data/model';
 import { generateWorld } from './data/simulate';
-import { CellPanel, FindingPanel, PenPanel, SitePanel } from './components/SidePanel';
+import { CellPanel, DronePanel, FindingPanel, PenPanel, SitePanel } from './components/SidePanel';
+import { swarmState } from './data/swarm';
 import { Legend } from './components/Legend';
 import { PenView } from './components/PenView';
-import { SiteMap } from './components/SiteMap';
+import { RobotView } from './components/RobotView';
 import { TimeBar } from './components/TimeBar';
 import { layerById } from './lib/layers';
 import { fromHash, initialState, openFindings, reducer, statusAt, toHash } from './lib/state';
 import { riskShareSeries, summarisePen, topRiskAreas } from './lib/summary';
 import { color } from './lib/tokens';
+
+const SiteScene3D = lazy(() => import('./components/SiteScene3D'));
 
 const world: World = generateWorld();
 const stormSummaries = world.pens.map((_, i) => summarisePen(world, i, STORM_FORECAST_DAY));
@@ -23,11 +27,12 @@ const siteShare = riskShareSeries(
 export default function App() {
   const [state, dispatch] = useReducer(reducer, initialState, (s) => ({ ...s, ...fromHash(window.location.hash, world.pens.length) }));
   const { penIndex, cell, findingId, day, layer, playing, reviews } = state;
-
   const summaries = useMemo(() => world.pens.map((_, i) => summarisePen(world, i, day)), [day]);
   const open = useMemo(() => openFindings(world, day, reviews), [day, reviews]);
   const pen = penIndex === null ? null : world.pens[penIndex];
   const finding = findingId === null ? null : (world.findings.find((f) => f.id === findingId) ?? null);
+  const drones = useMemo(() => swarmState(world, day, open), [day, open]);
+  const drone = state.droneId === null ? null : (drones.find((d) => d.id === state.droneId) ?? null);
   const penOpen = useMemo(() => (pen ? open.filter((f) => f.penId === pen.id) : []), [open, pen]);
 
   // Keep the view in the URL: moving between levels adds a history entry (so Back works); time and layer replace it.
@@ -94,7 +99,8 @@ export default function App() {
 
   const common = { world, day, reviews, dispatch };
   let side;
-  if (finding) side = <FindingPanel {...common} finding={finding} />;
+  if (drone) side = <DronePanel {...common} drone={drone} />;
+  else if (finding) side = <FindingPanel {...common} finding={finding} />;
   else if (pen && penIndex !== null && cell !== null)
     side = <CellPanel {...common} penIndex={penIndex} cell={cell} cellFindings={world.findings.filter((f) => f.penId === pen.id && f.cell === cell && f.detectedDay <= day)} />;
   else if (pen && penIndex !== null) side = <PenPanel {...common} penIndex={penIndex} summary={summaries[penIndex]} penFindings={world.findings.filter((f) => f.penId === pen.id)} />;
@@ -105,50 +111,17 @@ export default function App() {
   if (pen && penIndex !== null && cell !== null) crumbs.push({ label: cellLabel(cell), onClick: () => dispatch({ type: 'cell', penIndex, cell }) });
   if (finding) crumbs.push({ label: `Finding #${finding.id}`, onClick: () => dispatch({ type: 'finding', penIndex: penIndex ?? 0, cell: finding.cell, findingId: finding.id }) });
 
+  const penRisk = useMemo(() => summaries.map((s) => s.maxRisk), [summaries]);
+  const openPen = useCallback((i: number): void => dispatch({ type: 'pen', penIndex: i }), []);
+  const selectDrone = useCallback((id: string): void => dispatch({ type: 'drone', id }), []);
+
   return (
     <div className="app">
-      <header className="topbar">
-        <div className="brand">
-          <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
-            <circle cx="10" cy="10" r="8.5" fill="none" stroke={color.ink} strokeWidth="1.5" />
-            <path d="M10 1.5v17M1.5 10h17" stroke={color.ink} strokeWidth="0.8" />
-            <circle cx="10" cy="10" r="4" fill={color.signal} />
-          </svg>
-          Shoal
-        </div>
-        <nav className="crumbs" aria-label="Breadcrumb">
-          {crumbs.map((c, i) => (
-            <span key={c.label} style={{ display: 'inline-flex', alignItems: 'center' }}>
-              {i > 0 && (
-                <span className="sep" aria-hidden="true">
-                  ›
-                </span>
-              )}
-              {i === crumbs.length - 1 ? (
-                <span className="crumb-current" aria-current="page">
-                  {c.label}
-                </span>
-              ) : (
-                <button onClick={c.onClick}>{c.label}</button>
-              )}
-            </span>
-          ))}
-        </nav>
-        <div className="spacer" />
-        <span className="status-text optional" title="Every value in this demo comes from a simulation">
-          Demo data
-        </span>
-        <span className="status-text" title="Connection to the feed barge">
-          <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true">
-            <circle cx="4" cy="4" r="4" fill={color.live} />
-          </svg>
-          Barge connected
-        </span>
-      </header>
-
-      <main className="stage">
-        <SiteMap world={world} day={day} summaries={summaries} open={open} onOpenPen={(i) => dispatch({ type: 'pen', penIndex: i })} focusPen={penIndex} />
-        {pen && penIndex !== null ? (
+      <main className="stage" style={{ background: environment.haze }}>
+        <Suspense fallback={<p className="stage-hint">Loading 3D site…</p>}>
+          <SiteScene3D world={world} day={day} live={day === TODAY} open={open} drones={drones} focusPen={penIndex} penRisk={penRisk} env={environment} onOpenPen={openPen} onSelectDrone={selectDrone} />
+        </Suspense>
+        {pen && penIndex !== null && (
           <PenView
             key={penIndex}
             world={world}
@@ -160,24 +133,57 @@ export default function App() {
             sliceDepth={state.sliceDepth}
             findings={penOpen}
             reviews={reviews}
+            drones={drones}
+            selectedDrone={state.droneId}
             dispatch={dispatch}
           />
-        ) : (
-          <>
-            <p className="stage-hint" style={{ top: 16, bottom: 'auto' }}>
-              {day > TODAY ? 'Forecast: predicted from weather and current forecasts, not measured.' : 'Select a pen to zoom in.'}
-            </p>
-            <div className="stage-controls bottom-right">
-              <Legend layer={layerById('risk')} />
-            </div>
-          </>
         )}
+        {!pen && (
+          <div className="stage-controls bottom-left">
+            <Legend layer={layerById('risk')} />
+          </div>
+        )}
+        {drone && drone.penIndex !== null && <RobotView world={world} day={day} drone={drone} onClose={() => dispatch({ type: 'drone', id: null })} />}
         <div className="timebar">
           <TimeBar day={day} playing={playing} operations={world.operations} findings={world.findings} penId={pen?.id ?? null} dispatch={dispatch} />
         </div>
       </main>
 
       <aside className="side" aria-label="Details">
+        <header className="side-header">
+          <div className="brand">
+            <svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true">
+              <circle cx="10" cy="10" r="8.5" fill="none" stroke={color.ink} strokeWidth="1.5" />
+              <path d="M10 1.5v17M1.5 10h17" stroke={color.ink} strokeWidth="0.8" />
+              <circle cx="10" cy="10" r="4" fill={color.signal} />
+            </svg>
+            Shoal
+            <span className="status-text" title="Every value in this demo comes from a simulation. Feed barge connected.">
+              <svg width="7" height="7" viewBox="0 0 8 8" aria-hidden="true">
+                <circle cx="4" cy="4" r="4" fill={color.live} />
+              </svg>
+              Demo data
+            </span>
+          </div>
+          <nav className="crumbs" aria-label="Breadcrumb">
+            {crumbs.map((c, i) => (
+              <span key={c.label} style={{ display: 'inline-flex', alignItems: 'center' }}>
+                {i > 0 && (
+                  <span className="sep" aria-hidden="true">
+                    ›
+                  </span>
+                )}
+                {i === crumbs.length - 1 ? (
+                  <span className="crumb-current" aria-current="page">
+                    {c.label}
+                  </span>
+                ) : (
+                  <button onClick={c.onClick}>{c.label}</button>
+                )}
+              </span>
+            ))}
+          </nav>
+        </header>
         {side}
       </aside>
     </div>

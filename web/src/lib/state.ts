@@ -9,6 +9,8 @@ export interface UiState {
   penIndex: number | null;
   cell: number | null;
   findingId: number | null;
+  /** Selected swarm drone, shown in the side panel. */
+  droneId: string | null;
   day: number;
   layer: LayerId;
   playing: boolean;
@@ -23,6 +25,7 @@ export const initialState: UiState = {
   penIndex: null,
   cell: null,
   findingId: null,
+  droneId: null,
   day: TODAY,
   layer: 'risk',
   playing: false,
@@ -37,6 +40,7 @@ export type Action =
   | { type: 'cell'; penIndex: number; cell: number | null }
   | { type: 'finding'; penIndex: number; cell: number; findingId: number }
   | { type: 'up' }
+  | { type: 'drone'; id: string | null }
   | { type: 'day'; day: number }
   | { type: 'layer'; layer: LayerId }
   | { type: 'play'; playing: boolean }
@@ -88,14 +92,17 @@ const clampDay = (d: number): number => Math.max(0, Math.min(DAYS - 1, d));
 export function reducer(state: UiState, action: Action): UiState {
   switch (action.type) {
     case 'site':
-      return { ...state, penIndex: null, cell: null, findingId: null };
+      return { ...state, penIndex: null, cell: null, findingId: null, droneId: null };
     case 'pen':
-      return { ...state, penIndex: action.penIndex, cell: null, findingId: null };
+      return { ...state, penIndex: action.penIndex, cell: null, findingId: null, droneId: null };
     case 'cell':
-      return { ...state, penIndex: action.penIndex, cell: action.cell, findingId: null };
+      return { ...state, penIndex: action.penIndex, cell: action.cell, findingId: null, droneId: null };
     case 'finding':
-      return { ...state, penIndex: action.penIndex, cell: action.cell, findingId: action.findingId };
+      return { ...state, penIndex: action.penIndex, cell: action.cell, findingId: action.findingId, droneId: null };
+    case 'drone':
+      return { ...state, droneId: action.id };
     case 'up':
+      if (state.droneId !== null) return { ...state, droneId: null };
       if (state.findingId !== null) return { ...state, findingId: null };
       if (state.cell !== null) return { ...state, cell: null };
       return { ...state, penIndex: null };

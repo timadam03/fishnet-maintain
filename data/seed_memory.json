@@ -1,0 +1,21 @@
+{
+  "_note": "Seeded history for the demo, from before the simulated 90 days. Invented for the demo, not real farm data. 'day' is the UI's day index: 0 = 30 Aug 2026, 89 = 27 Nov 2026; -79 = 12 Jun, -168 = 15 Mar.",
+  "episodes": [
+    {
+      "id": "seed-o2-june",
+      "penId": 3,
+      "day": -79,
+      "kind": "oxygen",
+      "text": "Delousing with crowding in Pen 3 dropped oxygen to about 45% saturation at 5–15 m on the downstream side, in weak current.",
+      "outcome": "Confirmed. Feeding paused 6 h; oxygen recovered the next day once crowding ended. No mortality spike."
+    },
+    {
+      "id": "seed-net-march",
+      "penId": 7,
+      "day": -168,
+      "kind": "net",
+      "text": "After a storm, the old net in Pen 7 sagged onto the sinker tube; chafe and fraying at 17.5–20 m on the weather side.",
+      "outcome": "Confirmed on close inspection. Weights re-set and the area repaired before a twine broke."
+    }
+  ]
+}

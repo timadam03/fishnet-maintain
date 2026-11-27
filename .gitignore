@@ -3,3 +3,8 @@ dist/
 .DS_Store
 .claude/settings.local.json
 *.tsbuildinfo
+
+# decision layer
+.env
+shoal.db
+shoal.db-*

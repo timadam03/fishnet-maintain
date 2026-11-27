@@ -8,20 +8,31 @@ All data is **synthetic** (a seeded simulation), and the top bar says "Demo data
 
 ## What's in it
 
-- **One continuous view.** The site is drawn like a sea chart. Each pen is a ring coloured by the worst
-  hole risk on each side of its net. Click a pen and the chart zooms into it, then the pen's net opens
-  in 3D in its place. Esc or the breadcrumb zooms back out. The time bar floats at the bottom.
+- **One view.** A 3D stage of the whole farm, plus a sidebar with the breadcrumb, details and charts:
+  - every net hangs in the water painted with hole risk, with the barge and seabed around them;
+  - click a pen and the camera flies down into it, then hands over to the detailed pen view at the
+    same angle; Esc or the breadcrumb flies back out;
+  - the time bar floats at the bottom of the stage.
+- **Robot view.** Click any drone to see what it sees. `src/components/RobotView.tsx` is a
+  **placeholder**: a drawn camera feed with detections boxed, plus telemetry and a slot for net-life
+  prediction. The real robot view is being built separately; replace the component and keep its props
+  (`world`, `day`, `drone`, `onClose`).
 - **The net as a heatmap.** On the 3D net and on the "Unrolled" view (angle across, depth down, cone
   as a disc), values are interpolated smoothly between net areas and drawn in soft contour bands over
   a fine net-mesh texture.
   - Holes show as torn openings with a pulsing label.
   - When a pen opens, the camera turns to face the hole or the riskiest area.
 - **Layers, each with its own colour family:**
-  - Hole risk uses a magma-style scale: calm off-white through amber and coral to magenta and plum.
-  - Wear, weight contact and cleaning are red.
-  - Fouling is teal.
-  - Oxygen and temperature are blue.
-  - "Last seen" is grey.
+  - The palette is "paper and ink", almost monochrome: colour appears only where hole risk is high
+    (coral to deep red), so danger stands out.
+  - Other layers use quiet grey, slate and sage ramps.
+- **The swarm.** 20 drones work inside the nets, two to four per pen, sweeping along the netting (moving
+  in live mode). Every pen keeps a crew, and spare drones go to the pens with the most urgent areas
+  (risk × days since last seen). Teammates never take neighbouring areas, and open findings keep a drone
+  on them. Click a drone for its view, task, reason, battery, depth, health and queue. Drone D21 is
+  docked for repair, which is why Pen 8's cone goes stale. Logic: `src/data/swarm.ts`.
+- **Current.** In 3D, faint streamlines bend around the pen, and particles drift along them at the
+  day's current speed. On the site map, arrows show the current.
 - **Water inside the pen.** On the oxygen and temperature layers, a horizontal slice through the pen
   at a depth you choose shows how values change across the pen, such as oxygen dropping where water
   leaves the pen.
@@ -112,7 +123,7 @@ Charts and heatmaps are drawn by hand with SVG and canvas, so no chart library i
 These parts of the UI concept are left out on purpose:
 
 - company level with several sites
-- robots moving on the map, and live robot operations
+- live robot video and manual control
 - planning calendar and work-order board
 - reports and compliance export
 - diver mode for tablets, with offline sync

@@ -1,47 +1,25 @@
 import type { LayerDef } from '../lib/layers';
 
-/** Always-visible legend for the active layer, including how stale data is drawn. */
+/**
+ * Slim, always-visible legend for the active layer: one gradient bar with its end values, sitting
+ * lightly on the stage instead of a boxed card. The data source is in the tooltip.
+ */
 export function Legend({ layer }: { layer: LayerDef }) {
-  const steps = 12;
-  const swatches = Array.from({ length: steps }, (_, i) => layer.color(layer.min + ((layer.max - layer.min) * i) / (steps - 1)));
+  const steps = 16;
+  const stops = Array.from({ length: steps }, (_, i) => layer.color(layer.min + ((layer.max - layer.min) * i) / (steps - 1)));
+  const first = layer.legend[0];
+  const last = layer.legend[layer.legend.length - 1];
   return (
-    <div className="floating legend">
-      <div className="name">
-        {layer.label}
-        {layer.unit && <span style={{ color: 'var(--ink-3)', fontWeight: 400 }}> ({layer.unit})</span>}
-      </div>
-      {layer.id === 'risk' ? (
-        <div className="keys">
-          {layer.legend.map((l) => (
-            <span key={l.label} className="key">
-              <span className="swatch" style={{ background: layer.color(l.value) }} />
-              {l.label}
-            </span>
-          ))}
-        </div>
-      ) : (
-        <>
-          <div className="scale">
-            {swatches.map((c, i) => (
-              <span key={i} style={{ background: c }} />
-            ))}
-          </div>
-          <div className="ticks num">
-            {layer.legend.map((l) => (
-              <span key={l.label}>{l.label}</span>
-            ))}
-          </div>
-        </>
-      )}
+    <div className="legend-slim" title={`Source: ${layer.source}`}>
+      <span className="legend-name">{layer.label}</span>
+      <span className="legend-end">{first.label}</span>
+      <span className="legend-bar" style={{ background: `linear-gradient(90deg, ${stops.join(', ')})` }} aria-hidden="true" />
+      <span className="legend-end">{last.label}</span>
       {layer.hatchStale && (
-        <div className="keys">
-          <span className="key">
-            <span className="swatch hatch-swatch" />
-            Not seen for 14+ days, value uncertain
-          </span>
-        </div>
+        <span className="legend-end">
+          <span className="legend-hatch" aria-hidden="true" /> stale
+        </span>
       )}
-      <div className="source">{layer.source}</div>
     </div>
   );
 }

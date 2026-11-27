@@ -1,6 +1,7 @@
 import { Suspense, lazy, useCallback, useMemo, type Dispatch } from 'react';
 import { CELLS, TODAY, type Finding, type LayerId, type World } from '../data/model';
 import { riskScore } from '../data/risk';
+import type { Drone } from '../data/swarm';
 import { waterAtPoint } from '../data/water';
 import { LAYERS, computeLayerGrid, fitLayer, layerById, type LayerDef } from '../lib/layers';
 import { statusAt, type Action, type PenViewMode, type Review } from '../lib/state';
@@ -19,8 +20,13 @@ interface Props {
   sliceDepth: number;
   findings: Finding[];
   reviews: Record<number, Review>;
+  drones: Drone[];
+  selectedDrone: string | null;
   dispatch: Dispatch<Action>;
 }
+
+const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
+const compass = (deg: number): string => COMPASS[Math.round((((deg % 360) + 360) % 360) / 45) % 8];
 
 const KIND: Record<Finding['kind'], string> = { hole: 'Hole', chafe: 'Chafe', fraying: 'Fraying', distortion: 'Distortion' };
 
@@ -60,7 +66,9 @@ function paintSlice(canvas: HTMLCanvasElement, world: World, penId: number, dept
 }
 
 /** Pen level inside the one-view stage: layer chips, 3D or unrolled net, legend, and a depth slice for water layers. */
-export function PenView({ world, penIndex, day, layerId, cell, view, sliceDepth, findings, reviews, dispatch }: Props) {
+export function PenView({ world, penIndex, day, layerId, cell, view, sliceDepth, findings, reviews, drones, selectedDrone, dispatch }: Props) {
+  const penDrones = useMemo(() => drones.filter((d) => d.penIndex === penIndex), [drones, penIndex]);
+  const selectDrone = useCallback((id: string): void => dispatch({ type: 'drone', id }), [dispatch]);
   const grid = useMemo(() => computeLayerGrid(world, penIndex, day, layerId), [world, penIndex, day, layerId]);
   const layer = useMemo(() => fitLayer(layerById(layerId), grid.values), [layerId, grid]);
   const pen = world.pens[penIndex];
@@ -132,6 +140,11 @@ export function PenView({ world, penIndex, day, layerId, cell, view, sliceDepth,
               selectedCell={cell}
               findings={findings}
               currentDir={currentDir}
+              currentSpeed={world.env.currentSpeed[day]}
+              drones={penDrones}
+              selectedDrone={selectedDrone}
+              onSelectDrone={selectDrone}
+              live={day === TODAY}
               onSelect={select}
               onSelectFinding={selectFinding}
               labelFor={labelFor}
@@ -161,7 +174,12 @@ export function PenView({ world, penIndex, day, layerId, cell, view, sliceDepth,
       <div className="stage-controls bottom-left">
         <Legend layer={layer} />
       </div>
-      {view === '3d' && <p className="stage-hint centred">Drag to turn, scroll to zoom. The blue arrow shows the current{day > TODAY ? '. Forecast values are predicted.' : '.'}</p>}
+      {view === '3d' && (
+        <p className="stage-hint centred">
+          Current {Math.round(world.env.currentSpeed[day])}&nbsp;cm/s towards {compass(currentDir)}. Drag to turn, scroll to zoom.
+          {day > TODAY ? ' Forecast values are predicted.' : ''}
+        </p>
+      )}
     </div>
   );
 }

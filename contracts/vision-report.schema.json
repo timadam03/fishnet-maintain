@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "image": {
+      "type": "string",
+      "description": "Same path as in captures.jsonl, so the two join"
+    },
+    "model": {
+      "type": "string",
+      "description": "Which detector/version produced this, e.g. \"yolo-net-v3\""
+    },
+    "quality": {
+      "description": "How usable the image is; low values make the layer ask for a closer or slower look",
+      "type": "object",
+      "properties": {
+        "visibility": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "0 = nothing visible, 1 = clear water"
+        },
+        "sharpness": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "0 = blurred, 1 = sharp"
+        }
+      },
+      "required": [
+        "visibility",
+        "sharpness"
+      ]
+    },
+    "fouling_pct": {
+      "description": "Share of the visible net covered by growth",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "detections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "class": {
+            "type": "string",
+            "enum": [
+              "hole",
+              "mesh_opening",
+              "fraying",
+              "thinning",
+              "distortion",
+              "rope_contact",
+              "biofouling",
+              "other"
+            ]
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "bbox": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "items": false,
+            "minItems": 4,
+            "maxItems": 4,
+            "description": "[x, y, w, h] in pixels"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          },
+          "size_m": {
+            "description": "Estimated size of the defect",
+            "type": "number",
+            "minimum": 0
+          },
+          "crop": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "class",
+          "confidence",
+          "bbox"
+        ]
+      }
+    },
+    "heatmap": {
+      "description": "Path to a heatmap image for the UI and the trace",
+      "type": "string"
+    },
+    "where": {
+      "description": "Only for images without a captures.jsonl record (e.g. real footage)",
+      "type": "object",
+      "properties": {
+        "pen_id": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "cell": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 191,
+          "description": "Wall cell on the UI grid: row * 24 + col"
+        },
+        "auv": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "time": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pen_id",
+        "cell"
+      ]
+    }
+  },
+  "required": [
+    "image",
+    "model",
+    "detections"
+  ]
+}

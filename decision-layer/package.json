@@ -1,0 +1,31 @@
+{
+  "name": "shoal-decision-layer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hackathon demo: rules, net-risk scoring, d1 questions and agents on top of Shoal detections. Writes shoal.db for the dashboard.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "serve": "tsx --env-file-if-exists=../.env src/server.ts",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc",
+    "cli": "tsx --env-file-if-exists=../.env src/run.ts",
+    "setup": "bash scripts/setup-and-run.sh",
+    "contracts": "tsx scripts/export-contracts.ts",
+    "stand-in-vision": "tsx scripts/stand-in-vision.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/gateway": "4.0.135",
+    "@ai-sdk/google": "4.0.111",
+    "ai": "7.0.162",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@ai-sdk/provider": "4.0.35",
+    "@types/node": "26.6.6",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}

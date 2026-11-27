@@ -51,18 +51,8 @@ h3 {
 .app {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 380px;
-  grid-template-rows: 52px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   height: 100vh;
-}
-
-.topbar {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  padding: 0 16px;
-  background: var(--paper);
-  border-bottom: 1px solid var(--line);
 }
 
 .stage {
@@ -95,7 +85,7 @@ h3 {
 @media (max-width: 960px) {
   .app {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: 52px 72vh auto;
+    grid-template-rows: 72vh auto;
     height: auto;
   }
   .side {
@@ -141,10 +131,6 @@ h3 {
   color: var(--ink-3);
 }
 
-.topbar .spacer {
-  flex: 1;
-}
-
 .status-text {
   display: inline-flex;
   align-items: center;
@@ -158,10 +144,7 @@ h3 {
   .status-text.optional {
     display: none;
   }
-  .topbar {
-    gap: 12px;
   }
-}
 
 /* ---------- Side panel ---------- */
 
@@ -579,60 +562,9 @@ h3 {
 
 /* Site map */
 
-.site-svg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
-  overflow: visible;
-  transition: opacity 320ms var(--ease-out), filter 320ms var(--ease-out);
-}
-
 /* Zoomed into a pen: the chart stays as quiet context behind the pen. */
-.site-svg.focused {
-  opacity: 0.16;
-  filter: saturate(0.3);
-  pointer-events: none;
-}
-
-.site-svg.focused text {
-  display: none;
-}
-
-.pen-glyph {
-  cursor: pointer;
-}
-
-.pen-glyph:focus {
-  outline: none;
-}
-
-.pen-glyph:focus-visible .focus-ring {
-  stroke: var(--signal);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .pen-glyph:hover .focus-ring {
-    stroke: var(--ink-3);
-  }
-}
-
-.drone {
-  animation: orbit linear infinite;
-  transform-box: view-box;
-}
-
-@keyframes orbit {
-  to {
-    transform: rotate(360deg);
-  }
-}
 
 @media (prefers-reduced-motion: reduce) {
-  .drone {
-    animation: none;
-  }
   .btn {
     transition: none;
   }
@@ -747,6 +679,8 @@ h3 {
 
 .stage-hint.centred {
   left: 50%;
+  top: 60px;
+  bottom: auto;
   transform: translateX(-50%);
   white-space: nowrap;
 }
@@ -783,14 +717,29 @@ h3 {
   position: absolute;
   inset: 0;
   z-index: 1;
-  animation: stage-in 360ms var(--ease-out) 180ms both;
+  /* Fjord water: light haze at the surface, deepening teal below. */
+  background: linear-gradient(180deg, #eef3f3 0%, #dcecee 42%, #b9d1d6 100%);
+  /* Appears as the site camera arrives inside the pen. */
+  animation: stage-in 420ms var(--ease-out) 650ms both;
 }
 
 @keyframes stage-in {
   from {
     opacity: 0;
-    transform: scale(0.96);
   }
+}
+
+.site3d {
+  position: absolute;
+  inset: 0;
+  transition: opacity 300ms var(--ease-out);
+}
+
+/* Zoomed into a pen: the site scene hands over to the pen view once the camera has arrived. */
+.site3d.focused {
+  opacity: 0;
+  pointer-events: none;
+  transition-delay: 750ms;
 }
 
 .stage-canvas {
@@ -804,7 +753,7 @@ h3 {
   left: 16px;
   right: 16px;
   bottom: 96px;
-  background: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.94);
   border-radius: 14px;
   box-shadow: var(--shadow-float);
 }
@@ -879,10 +828,7 @@ h3 {
   .scene-label.hole .pin {
     animation: none;
   }
-  .site-svg {
-    transition: none;
   }
-}
 
 .chart-caption {
   display: flex;
@@ -933,3 +879,232 @@ h3 {
   color: var(--ink);
   background: var(--signal-soft);
 }
+
+.battery {
+  display: inline-block;
+  width: 48px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--risk-low-0);
+  vertical-align: 0;
+  overflow: hidden;
+}
+
+.battery > span {
+  display: block;
+  height: 100%;
+}
+
+.scene-label.drone-label {
+  margin: -30px 0 0 -20px;
+  color: var(--signal);
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.85);
+  font-size: 11.5px;
+}
+
+.scene-label.drone-label.selected {
+  border-color: var(--signal);
+}
+
+
+
+/* ---------- Slim legend ---------- */
+
+.legend-slim {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(6px);
+  font-size: 12px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.legend-name {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.legend-bar {
+  width: 140px;
+  height: 6px;
+  border-radius: 3px;
+}
+
+.legend-hatch {
+  display: inline-block;
+  width: 12px;
+  height: 8px;
+  border-radius: 2px;
+  vertical-align: -1px;
+  background: repeating-linear-gradient(135deg, var(--hatch) 0 1.2px, transparent 1.2px 3.5px), var(--unknown);
+}
+
+/* ---------- Sidebar header (replaces the top bar) ---------- */
+
+.side-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 20px 10px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+
+.side-header .brand {
+  gap: 8px;
+}
+
+.side-header .status-text {
+  margin-left: auto;
+  font-weight: 400;
+  font-size: 12px;
+}
+
+.side-header .crumbs {
+  margin-left: -8px;
+  flex-wrap: wrap;
+  white-space: normal;
+}
+
+/* ---------- Robot view ---------- */
+
+.robot-view {
+  position: absolute;
+  inset: 0 0 92px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: rgba(244, 244, 242, 0.97);
+  animation: stage-in 260ms var(--ease-out) both;
+}
+
+.robot-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.robot-head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.robot-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 16px;
+}
+
+@media (max-width: 1100px) {
+  .robot-body {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+}
+
+.robot-feed {
+  position: relative;
+  min-height: 240px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #232a2b;
+}
+
+.robot-feed canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.robot-badge {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 12px;
+}
+
+.robot-info {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.robot-info .facts dd {
+  text-align: left;
+}
+
+.placeholder-slot {
+  padding: 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.scene-label.site-label {
+  margin: -34px 0 0 -10px;
+  font-weight: 600;
+}
+
+.site3d.focused .scene-labels {
+  display: none;
+}
+
+/* Compass on the 3D site; the needle turns with the camera. */
+.compass {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid var(--line);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.compass-needle {
+  position: absolute;
+  inset: 4px;
+  display: flex;
+  justify-content: center;
+}
+
+.compass-needle::before {
+  content: '';
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  margin-left: -4px;
+  border: 4px solid transparent;
+  border-bottom: 12px solid var(--ink);
+}
+
+.compass-needle span {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.site3d.focused .compass {
+  display: none;
+}
+
