@@ -16,7 +16,6 @@ import {
 } from '../data/model';
 import { RISK_LEVELS, explainRisk, riskLevel, type RiskLevel } from '../data/risk';
 import { CONE_DRONE_DOCKED_DAY } from '../data/simulate';
-import type { Drone } from '../data/swarm';
 import { FROZEN_SENSOR, sensorProfile } from '../data/water';
 import { riskColor } from '../lib/layers';
 import { statusAt, type Action, type Review } from '../lib/state';
@@ -537,73 +536,6 @@ export function FindingPanel({ world, day, finding: f, reviews, dispatch }: Find
             The hole opened around {dayLabel(f.openedDay)}, {f.detectedDay - f.openedDay} days before it was found.
           </p>
         )}
-      </section>
-    </>
-  );
-}
-
-/* ---------------- Drone ---------------- */
-
-interface DroneProps extends CommonProps {
-  drone: Drone;
-}
-
-const DRONE_STATUS: Record<Drone['status'], string> = {
-  inspecting: 'Inspecting',
-  sampling: 'Sampling water',
-  returning: 'Returning to charge',
-  docked: 'Docked for repair',
-};
-
-export function DronePanel({ world, day, drone, dispatch }: DroneProps) {
-  const pen = drone.penIndex === null ? null : world.pens[drone.penIndex];
-  return (
-    <>
-      <section className="section">
-        <h2>{drone.name}</h2>
-        <p className="lede">
-          {DRONE_STATUS[drone.status]}
-          {pen ? ` in ${pen.name}` : ' at the feed barge'}
-          {day > TODAY ? '. Planned, not yet flown.' : '.'}
-        </p>
-      </section>
-      <section className="section">
-        <h3>Task</h3>
-        <p style={{ margin: 0 }}>{drone.task}</p>
-        <p className="note">{drone.reason}</p>
-        {pen && drone.penIndex !== null && drone.cell !== null && (
-          <button className="btn" style={{ marginTop: 12 }} onClick={() => dispatch({ type: 'cell', penIndex: drone.penIndex!, cell: drone.cell! })}>
-            Show this area
-          </button>
-        )}
-      </section>
-      <section className="section">
-        <dl className="facts">
-          <dt>Battery</dt>
-          <dd>
-            <span className="battery" aria-hidden="true">
-              <span style={{ width: `${drone.battery}%`, background: drone.battery < 45 ? color.riskHigh : color.ink2 }} />
-            </span>{' '}
-            {drone.battery}%
-          </dd>
-          <dt>Depth</dt>
-          <dd>{drone.penIndex === null ? 'At the surface' : `${drone.depth} m`}</dd>
-          <dt>Last message</dt>
-          <dd>{drone.lastContactMin === 0 ? 'Just now' : `${drone.lastContactMin} min ago`}</dd>
-          <dt>Health</dt>
-          <dd>{drone.health}</dd>
-        </dl>
-      </section>
-      <section className="section">
-        <h3>Next in its queue</h3>
-        <ol className="steps">
-          {drone.next.map((n) => (
-            <li key={n}>
-              <div>{n}</div>
-            </li>
-          ))}
-        </ol>
-        <p className="note">The swarm re-plans every few minutes from risk and how long areas have gone unseen. Hard limits for depth, net distance and battery stay on the drone.</p>
       </section>
     </>
   );

@@ -79,6 +79,14 @@ function useFakeFeed(ref: RefObject<HTMLCanvasElement | null>, live: boolean, de
   }, [ref, live, detection]);
 }
 
+const STATUS: Record<Drone['status'], string> = {
+  inspecting: 'Inspecting',
+  sampling: 'Sampling water',
+  returning: 'Returning to charge',
+  docked: 'Docked for repair',
+};
+
+/** Floating window over the stage. Esc, the close button, or a click anywhere else on the stage closes it. */
 export function RobotView({ world, day, drone, onClose }: RobotViewProps) {
   const ref = useRef<HTMLCanvasElement>(null);
   const pen = drone.penIndex === null ? null : world.pens[drone.penIndex];
@@ -88,47 +96,53 @@ export function RobotView({ world, day, drone, onClose }: RobotViewProps) {
       ? world.findings.find((f) => f.penId === pen.id && f.cell === drone.cell && f.detectedDay <= day && !f.steps.some((s) => s.day <= day && (s.status === 'verified' || s.status === 'rejected')))
       : undefined;
   const detection = finding ? `${finding.kind === 'hole' ? 'Hole' : 'Wear'} #${finding.id}, ${Math.round(finding.confidence * 100)}%` : risk && risk.score >= 0.5 ? 'Worn twine?' : null;
-  useFakeFeed(ref, day === TODAY, detection);
+  useFakeFeed(ref, day === TODAY && pen !== null, detection);
 
   return (
-    <section className="robot-view" aria-label={`${drone.name} view`}>
-      <header className="robot-head">
-        <div>
-          <h2>{drone.name}</h2>
-          <p className="lede" style={{ margin: 0 }}>
-            {pen ? `${pen.name}, ${drone.cell !== null ? cellLabel(drone.cell) : ''}, ${drone.depth} m` : 'At the barge'}
-            {day === TODAY ? '' : `, ${dayLabel(day)}`}
-          </p>
-        </div>
-        <button className="btn" onClick={onClose}>
-          Back to the pen<kbd>Esc</kbd>
-        </button>
-      </header>
-      <div className="robot-body">
-        <div className="robot-feed">
-          <canvas ref={ref} aria-label="Simulated camera feed" role="img" />
-          <span className="robot-badge">{day === TODAY ? 'Live, simulated' : 'Recorded, simulated'}</span>
-        </div>
-        <div className="robot-info">
-          <dl className="facts">
-            <dt>Task</dt>
-            <dd>{drone.task}</dd>
-            <dt>Battery</dt>
-            <dd>{drone.battery}%</dd>
-            <dt>Hole risk here</dt>
-            <dd>{risk ? Math.round(risk.score * 100) : '–'}</dd>
-            <dt>Last message</dt>
-            <dd>{drone.lastContactMin === 0 ? 'Just now' : `${drone.lastContactMin} min ago`}</dd>
-          </dl>
-          <div className="placeholder-slot">
-            <b>Net life prediction</b>
-            <p className="note" style={{ marginTop: 4 }}>
-              Comes from the robot-view module being built by the team: remaining strength and expected time to failure for the area in view. This
-              panel and the feed are placeholders until it is connected.
+    <>
+      <div className="robot-backdrop" onClick={onClose} aria-hidden="true" />
+      <section className="robot-window" role="dialog" aria-label={`${drone.name}, camera and status`}>
+        <header className="robot-head">
+          <div>
+            <h2>{drone.name}</h2>
+            <p className="note" style={{ margin: 0 }}>
+              {STATUS[drone.status]}
+              {pen ? ` in ${pen.name}${drone.cell !== null ? `, ${cellLabel(drone.cell)}` : ''}, ${drone.depth} m` : ' at the feed barge'}
+              {day === TODAY ? '' : `, ${dayLabel(day)}`}
             </p>
           </div>
+          <button className="btn" onClick={onClose} aria-label="Close robot window">
+            Close<kbd>Esc</kbd>
+          </button>
+        </header>
+        <div className="robot-feed">
+          {pen ? <canvas ref={ref} aria-label="Simulated camera feed" role="img" /> : <p className="robot-off">Camera off while docked.</p>}
+          {pen && <span className="robot-badge">{day === TODAY ? 'Live, simulated' : 'Recorded, simulated'}</span>}
         </div>
-      </div>
-    </section>
+        <p style={{ margin: 0 }}>{drone.task}</p>
+        <p className="note" style={{ margin: 0 }}>
+          {drone.reason}
+        </p>
+        <dl className="facts robot-facts">
+          <dt>Battery</dt>
+          <dd>{drone.battery}%</dd>
+          <dt>Hole risk here</dt>
+          <dd>{risk ? Math.round(risk.score * 100) : '–'}</dd>
+          <dt>Last message</dt>
+          <dd>{drone.lastContactMin === 0 ? 'Just now' : `${drone.lastContactMin} min ago`}</dd>
+          <dt>Health</dt>
+          <dd>{drone.health}</dd>
+          <dt>Next</dt>
+          <dd>{drone.next[0]}</dd>
+        </dl>
+        <div className="placeholder-slot">
+          <b>Net life prediction</b>
+          <p className="note" style={{ marginTop: 4 }}>
+            Comes from the robot-view module being built by the team: remaining strength and expected time to failure for the area in view. The feed
+            and this panel are placeholders until it is connected.
+          </p>
+        </div>
+      </section>
+    </>
   );
 }

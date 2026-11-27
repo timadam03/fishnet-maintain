@@ -974,51 +974,64 @@ h3 {
   white-space: normal;
 }
 
-/* ---------- Robot view ---------- */
+/* ---------- Robot window ---------- */
 
-.robot-view {
+.robot-backdrop {
   position: absolute;
-  inset: 0 0 92px;
+  inset: 0;
   z-index: 4;
+}
+
+.robot-window {
+  position: absolute;
+  top: 64px;
+  right: 16px;
+  bottom: 96px;
+  width: min(520px, calc(100% - 32px));
+  z-index: 5;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   padding: 16px;
-  background: rgba(244, 244, 242, 0.97);
-  animation: stage-in 260ms var(--ease-out) both;
+  overflow-y: auto;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 2px 4px rgba(19, 32, 45, 0.06), 0 16px 40px rgba(19, 32, 45, 0.16);
+  animation: window-in 220ms var(--ease-out) both;
+  transform-origin: top right;
+}
+
+@keyframes window-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .robot-window {
+    animation: none;
+  }
 }
 
 .robot-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
 }
 
 .robot-head h2 {
   margin: 0;
-  font-size: 18px;
-}
-
-.robot-body {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
-  gap: 16px;
-}
-
-@media (max-width: 1100px) {
-  .robot-body {
-    grid-template-columns: 1fr;
-    overflow-y: auto;
-  }
+  font-size: 17px;
 }
 
 .robot-feed {
   position: relative;
-  min-height: 240px;
-  border-radius: 12px;
+  flex: none;
+  aspect-ratio: 16 / 10;
+  border-radius: 10px;
   overflow: hidden;
   background: #232a2b;
 }
@@ -1030,10 +1043,20 @@ h3 {
   height: 100%;
 }
 
+.robot-off {
+  margin: 0;
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #c9d0d2;
+  font-size: 13px;
+}
+
 .robot-badge {
   position: absolute;
-  left: 12px;
-  top: 12px;
+  left: 10px;
+  top: 10px;
   padding: 2px 8px;
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.45);
@@ -1041,14 +1064,8 @@ h3 {
   font-size: 12px;
 }
 
-.robot-info {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.robot-info .facts dd {
-  text-align: left;
+.robot-facts {
+  font-size: 13px;
 }
 
 .placeholder-slot {

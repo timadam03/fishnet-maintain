@@ -11,6 +11,7 @@ import type { Drone } from '../data/swarm';
 import { paintNetTexture } from '../lib/heat';
 import { computeLayerGrid, layerById } from '../lib/layers';
 import { buildNetGeometry, netPoint } from '../lib/netGeometry';
+import { ROBOT_COLOR, placeholderGeometry, robotGeometry } from '../lib/robotModel';
 import { NET_OPACITY, type Environment } from '../lib/environment';
 import { TERRAIN, heightAt, paintTerrain } from '../lib/terrain';
 import { riskColor } from '../lib/layers';
@@ -236,6 +237,7 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
         const angle = base + 14 * Math.sin(t / 3 + k);
         const local = netPoint(Math.min(d.depth, WALL_DEPTH_M), angle, 0.8);
         m.position.copy(centre).add(local);
+        m.rotation.y = -(angle * Math.PI) / 180; // along the net as it sweeps
       });
       const today = dayRef.current;
       const a = (world.env.currentDir[today] * Math.PI) / 180;
@@ -327,7 +329,7 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
       el.removeEventListener('pointermove', onMove);
       scene.traverse((o) => {
         if (o instanceof THREE.Mesh || o instanceof THREE.Line || o instanceof THREE.Points) {
-          o.geometry.dispose();
+          if (!o.userData.sharedGeometry) o.geometry.dispose();
           const m = o.material as THREE.Material | THREE.Material[];
           (Array.isArray(m) ? m : [m]).forEach((x) => x.dispose());
         }
@@ -386,24 +388,36 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
     c.render();
   }, [hoverPen]);
 
-  // Drone bodies.
+  // Drone bodies: the BlueROV2 model, enlarged so it reads at site scale.
   useEffect(() => {
     const c = ctx.current;
     if (!c) return;
+    let alive = true;
     c.droneGroup.children.forEach((m) => {
-      if (m instanceof THREE.Mesh) {
-        m.geometry.dispose();
-        (m.material as THREE.Material).dispose();
-      }
+      if (m instanceof THREE.Mesh) (m.material as THREE.Material).dispose();
     });
     c.droneGroup.clear();
     for (const d of drones) {
-      const m = new THREE.Mesh(new THREE.SphereGeometry(2.6, 14, 10), new THREE.MeshLambertMaterial({ color: d.penIndex === null ? color.ink3 : color.signal }));
-      m.scale.set(1.6, 0.8, 0.8);
+      const m = new THREE.Mesh(placeholderGeometry, new THREE.MeshLambertMaterial({ color: d.penIndex === null ? color.ink3 : ROBOT_COLOR }));
+      m.userData.sharedGeometry = true;
+      m.scale.setScalar(8);
       m.userData.droneId = d.id;
       c.droneGroup.add(m);
     }
     c.animate(timeRef.current);
+    robotGeometry().then(
+      (geometry) => {
+        if (!alive) return;
+        c.droneGroup.children.forEach((m) => {
+          if (m instanceof THREE.Mesh) m.geometry = geometry;
+        });
+        c.render();
+      },
+      (err) => console.warn('BlueROV2 model failed to load; showing placeholder boxes', err),
+    );
+    return () => {
+      alive = false;
+    };
   }, [drones]);
 
   // Fly into the opened pen, or back out to the whole site.

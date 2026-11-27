@@ -2,7 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useReducer, useRef } f
 import { environment } from './lib/environment';
 import { DAYS, STORM_FORECAST_DAY, TODAY, cellLabel, type World } from './data/model';
 import { generateWorld } from './data/simulate';
-import { CellPanel, DronePanel, FindingPanel, PenPanel, SitePanel } from './components/SidePanel';
+import { CellPanel, FindingPanel, PenPanel, SitePanel } from './components/SidePanel';
 import { swarmState } from './data/swarm';
 import { Legend } from './components/Legend';
 import { PenView } from './components/PenView';
@@ -99,8 +99,7 @@ export default function App() {
 
   const common = { world, day, reviews, dispatch };
   let side;
-  if (drone) side = <DronePanel {...common} drone={drone} />;
-  else if (finding) side = <FindingPanel {...common} finding={finding} />;
+  if (finding) side = <FindingPanel {...common} finding={finding} />;
   else if (pen && penIndex !== null && cell !== null)
     side = <CellPanel {...common} penIndex={penIndex} cell={cell} cellFindings={world.findings.filter((f) => f.penId === pen.id && f.cell === cell && f.detectedDay <= day)} />;
   else if (pen && penIndex !== null) side = <PenPanel {...common} penIndex={penIndex} summary={summaries[penIndex]} penFindings={world.findings.filter((f) => f.penId === pen.id)} />;
@@ -143,7 +142,7 @@ export default function App() {
             <Legend layer={layerById('risk')} />
           </div>
         )}
-        {drone && drone.penIndex !== null && <RobotView world={world} day={day} drone={drone} onClose={() => dispatch({ type: 'drone', id: null })} />}
+        {drone && <RobotView world={world} day={day} drone={drone} onClose={() => dispatch({ type: 'drone', id: null })} />}
         <div className="timebar">
           <TimeBar day={day} playing={playing} operations={world.operations} findings={world.findings} penId={pen?.id ?? null} dispatch={dispatch} />
         </div>

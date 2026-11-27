@@ -25,6 +25,7 @@ import {
 import type { Drone } from '../data/swarm';
 import { NET_OPACITY, environment } from '../lib/environment';
 import { paintNetTexture } from '../lib/heat';
+import { ROBOT_COLOR, placeholderGeometry, robotGeometry } from '../lib/robotModel';
 import { buildNetGeometry, netPoint, radiusAt } from '../lib/netGeometry';
 import type { LayerDef, LayerGrid } from '../lib/layers';
 import { color } from '../lib/tokens';
@@ -249,7 +250,7 @@ export default function Pen3D({
     scene.add(flowLines);
     const flowPoints = new THREE.Points(
       new THREE.BufferGeometry(),
-      new THREE.PointsMaterial({ color: color.signal, size: 0.9, transparent: true, opacity: 0.75, depthWrite: false }),
+      new THREE.PointsMaterial({ color: color.signal, size: 0.45, transparent: true, opacity: 0.6, depthWrite: false }),
     );
     scene.add(flowPoints);
     let paths: THREE.Vector3[][] = [];
@@ -445,7 +446,7 @@ export default function Pen3D({
       el.removeEventListener('pointerleave', onLeave);
       scene.traverse((o) => {
         if (o instanceof THREE.Mesh || o instanceof THREE.Line || o instanceof THREE.Points) {
-          o.geometry.dispose();
+          if (!o.userData.sharedGeometry) o.geometry.dispose();
           const m = o.material as THREE.Material | THREE.Material[];
           (Array.isArray(m) ? m : [m]).forEach((x) => x.dispose());
         }
@@ -547,31 +548,31 @@ export default function Pen3D({
     c.animate(timeRef.current);
   }, [currentDir]);
 
-  // Drone bodies: a small hull with two thrusters; the selected drone gets a ring.
+  // Drone bodies: the BlueROV2 model, drawn about 10× its real 0.45 m so it reads at pen scale.
+  // The selected drone gets a ring.
   useEffect(() => {
     const c = ctx.current;
     if (!c) return;
+    let alive = true;
     c.droneGroup.children.forEach((g) =>
       g.traverse((o) => {
         if (o instanceof THREE.Mesh) {
-          o.geometry.dispose();
+          if (!o.userData.sharedGeometry) o.geometry.dispose();
           (o.material as THREE.Material).dispose();
         }
       }),
     );
     c.droneGroup.clear();
+    const bodies: THREE.Mesh[] = [];
     for (const d of drones) {
       const g = new THREE.Group();
       g.userData.droneId = d.id;
-      const hull = new THREE.Mesh(new THREE.CapsuleGeometry(0.75, 1.8, 6, 12), new THREE.MeshLambertMaterial({ color: color.signal }));
-      hull.rotation.x = Math.PI / 2; // long axis along local z, the direction it faces
-      g.add(hull);
-      for (const side of [-1, 1]) {
-        const thruster = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.6, 10), new THREE.MeshLambertMaterial({ color: color.ink2 }));
-        thruster.rotation.x = Math.PI / 2;
-        thruster.position.set(side * 0.9, 0, -1.1);
-        g.add(thruster);
-      }
+      const body = new THREE.Mesh(placeholderGeometry, new THREE.MeshLambertMaterial({ color: ROBOT_COLOR }));
+      body.userData.sharedGeometry = true;
+      body.scale.setScalar(4.5);
+      body.rotation.y = Math.PI; // the model faces −z; lookAt points +z along the sweep
+      g.add(body);
+      bodies.push(body);
       if (d.id === selectedDrone) {
         const ring = new THREE.Mesh(new THREE.TorusGeometry(2, 0.12, 8, 32), new THREE.MeshBasicMaterial({ color: color.signal }));
         ring.rotation.x = Math.PI / 2;
@@ -580,6 +581,17 @@ export default function Pen3D({
       c.droneGroup.add(g);
     }
     c.animate(timeRef.current);
+    robotGeometry().then(
+      (geometry) => {
+        if (!alive) return;
+        bodies.forEach((b) => (b.geometry = geometry));
+        c.render();
+      },
+      (err) => console.warn('BlueROV2 model failed to load; showing placeholder boxes', err),
+    );
+    return () => {
+      alive = false;
+    };
   }, [drones, selectedDrone]);
 
   // Live mode: drones sweep and the current drifts, at about 30 frames a second.
