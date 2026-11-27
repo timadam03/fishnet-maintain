@@ -226,15 +226,16 @@ export default function Pen3D({
     scene.add(net);
     buildRigging(scene);
 
-    // Fjord surroundings: a sandy seabed fading into the haze, and a light water surface.
-    scene.fog = new THREE.Fog(environment.haze, 160, 420);
-    const seabed = new THREE.Mesh(new THREE.CircleGeometry(260, 64), new THREE.MeshLambertMaterial({ color: environment.sand }));
+    // Fjord surroundings in the same water colours as the site view: the seabed fades into the water,
+    // under a faint surface.
+    scene.fog = new THREE.Fog(environment.water, 160, 420);
+    const seabed = new THREE.Mesh(new THREE.CircleGeometry(260, 64), new THREE.MeshLambertMaterial({ color: environment.seabed }));
     seabed.rotation.x = -Math.PI / 2;
     seabed.position.y = -46;
     scene.add(seabed);
     const surface = new THREE.Mesh(
       new THREE.RingGeometry(R + 2.8, 260, 64),
-      new THREE.MeshBasicMaterial({ color: environment.shallow, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }),
+      new THREE.MeshBasicMaterial({ color: environment.shallow, transparent: true, opacity: environment.surfaceOpacity, side: THREE.DoubleSide, depthWrite: false }),
     );
     surface.rotation.x = -Math.PI / 2;
     surface.position.y = 0.1;

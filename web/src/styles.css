@@ -717,8 +717,8 @@ h3 {
   position: absolute;
   inset: 0;
   z-index: 1;
-  /* Fjord water: light haze at the surface, deepening teal below. */
-  background: linear-gradient(180deg, #eef3f3 0%, #dcecee 42%, #b9d1d6 100%);
+  /* Fjord water, the same tones as the site view (environment.waterFar and environment.water). */
+  background: linear-gradient(180deg, #a6bcc1 0%, #8ea7b0 60%);
   /* Appears as the site camera arrives inside the pen. */
   animation: stage-in 420ms var(--ease-out) 650ms both;
 }
