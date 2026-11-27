@@ -204,6 +204,7 @@ rng = np.random.default_rng(7)
 # ----------------------------------------------------------------------------- safe navigation
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import plan_mode as pm  # noqa: E402  numpy only; also builds the centre-survey waypoints
 NAV = bool(args.nav_policy or args.safe_nav)
 POLICY, SAFETY, NCFG = None, None, None
 if NAV:
@@ -743,7 +744,7 @@ def build_auv(k, pos, yaw):
 hfov = 2 * math.atan(H_APERTURE / (2 * FOCAL))
 vfov = 2 * math.atan(V_APERTURE / (2 * FOCAL))
 SECTOR = 2 * math.pi / N_AUV
-CENTRE_R = max(0.0, args.centre_radius)
+CENTRE_R = max(0.05, args.centre_radius)   # on the axis exactly, the standoff would equal the pen radius
 # In centre survey the vehicle sits on a small circle and looks outward, so the net is between
 # CAGE_R - CENTRE_R (straight ahead) and a little more at the edges of its sweep. Taking the near
 # value keeps the footprint estimate conservative.
@@ -783,11 +784,15 @@ def plan(k):
         for i in cols:
             th = th0 + (i + 0.5) * dth
             if args.survey == "centre":
-                # One station per band, on the sector midline; only yaw changes shot to shot.
-                pos = np.array([CENTRE_R * math.cos(mid), CENTRE_R * math.sin(mid), z])
+                # One station per band on the sector midline; only the heading changes shot to shot.
+                # The station is off the axis, so pointing the camera radially (yaw = th) would look
+                # up to ~9 deg away from th at the sector edges and label the photo with the wrong
+                # cell. plan_mode.waypoint aims the camera at the net point at th and records the
+                # true distance (look_dist), which label() uses for the ground-truth footprint.
+                wps.append(pm.waypoint(th, mid, -z / CAGE_DEPTH, CAGE_R - CENTRE_R, CAGE_R, CAGE_DEPTH, band=b))
             else:
                 pos = np.array([R_PATH * math.cos(th), R_PATH * math.sin(th), z])
-            wps.append({"pos": pos, "yaw": th, "theta": th, "z": float(z), "band": b})
+                wps.append({"pos": pos, "yaw": th, "theta": th, "z": float(z), "band": b})
     return wps
 
 
