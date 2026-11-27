@@ -14,6 +14,7 @@ const PRICE_PER_INPUT_TOKEN: Record<string, number> = {
   'liquid/d1.2-ultra': 0.000000042,
   'liquid/d1.2': 0.00000002,
   'typesafe-ai/jev': 0.000000042,
+  'google/gemini-decision-1': 0.0000001,
 };
 
 export interface YesNo {

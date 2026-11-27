@@ -25,23 +25,25 @@ Node 24 or later (tested on 26.4).
 
 ```bash
 cd decision-layer
-npm install
-cp ../.env.example ../.env   # then fill in keys; .env is git-ignored
+npm run setup    # installs, asks for keys (hidden), lets you pick models, tests them, runs the demo
 ```
 
-Models are optional. Without keys everything runs, d1 questions use their fallback rules, and the curator
-uses its rule-based version; responses say which one answered.
+Two kinds of model, both optional. Without them everything runs: decision questions use stated
+fallback rules, the curator uses its rule-based version, the investigator says it's off, and every
+response says which one answered.
 
-| Variable | For |
-|---|---|
-| `GOOGLE_GENERATIVE_AI_API_KEY` + `GEMINI_MODEL` | Investigator and curator through Gemini (AI Studio key; free tier works for a demo) |
-| `AI_GATEWAY_API_KEY` (+ `DECISION_MODEL`) | d1/Jev through the Vercel AI Gateway; also Gemini if no Google key is set |
-| `SHOAL_DB` | SQLite file for reviews, alert closures, proposals, d1 cache and chat (default `../shoal.db`) |
+| Variable | Model kind | Used for | Works on the free Vercel AI Gateway tier (checked 27 Nov 2026) |
+|---|---|---|---|
+| `DECISION_MODEL` | Decision model: typed yes/no questions, returns a probability, no text | "Same finding?" and "similar past episode?" | `liquid/d1.2-ultra`, `liquid/d1.2`. `google/gemini-decision-1` and `typesafe-ai/jev` need paid credits |
+| `AGENT_MODEL` | Chat model with tool calling | Investigator and curator | `nvidia/nemotron-3.5-lightning-free`. A plain Gemini name (e.g. `gemini-3.8-flash`) uses an AI Studio key instead |
+| `AI_GATEWAY_API_KEY` | | Key for every gateway model | |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | | Only for a plain Gemini name in `AGENT_MODEL` | |
+| `SHOAL_DB` | | SQLite file for reviews, alert closures, proposals, d1 cache and chat (default `../shoal.db`) | |
 
 ## Run
 
 ```bash
-npm run setup                 # asks for keys (hidden), checks them, then runs everything end to end
+npm run setup                 # keys and models (tested live), then everything end to end
 npm run serve                 # API on http://localhost:8787
 npm run cli -- demo           # print the demo beats
 npm run cli -- curator        # run the curator once

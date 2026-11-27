@@ -15,6 +15,11 @@ Status: settled 2026-11-27. Build target: 1 day, 1–2 people.
 > - **§6 cases A–C:** the UI's demo cases are used.
 > - **The learning beat:** it is now "re-image low-confidence fraying" (rule F1), learned from the simulated review history.
 >
+> **Models (checked live 27 Nov):**
+> - "Gemini decision" means **Gemini Decision 1**. It is a decision model like d1 and Jev, not the agents' chat model. On the Vercel gateway it needs paid credits, as Jev does, so the demo uses `liquid/d1.2-ultra`, which works on the free tier.
+> - The agents use any chat model with tool calling. The default is `nvidia/nemotron-3.5-lightning-free` through the gateway.
+> - Gemini chat models on the AI Studio free tier had no quota or were retired for new users.
+>
 > What was built, and how to run it, is in [`decision-layer/README.md`](../decision-layer/README.md). The oxygen rules (§4.1), d1 questions (§4.3), agents (§5) and guardrails still apply in spirit. Oxygen now uses % saturation (warn 65%, critical 50%) as the UI does, and the drift check became a "no fresh value" sensor check.
 Background and sources are in [`decision-layer-design.md`](decision-layer-design.md). This file is what we build.
 

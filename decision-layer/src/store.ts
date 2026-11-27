@@ -116,6 +116,7 @@ export class Store {
 
   /** Wipes everything people did, for a clean demo run. */
   reset(): void {
-    this.db.exec('DELETE FROM reviews; DELETE FROM alert_closures; DELETE FROM proposals; DELETE FROM chat_messages;');
+    // Also restart the id counters, so a fresh demo run shows proposal 1 again.
+    this.db.exec("DELETE FROM reviews; DELETE FROM alert_closures; DELETE FROM proposals; DELETE FROM chat_messages; DELETE FROM sqlite_sequence WHERE name IN ('proposals', 'chat_messages');");
   }
 }

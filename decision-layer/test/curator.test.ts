@@ -15,8 +15,8 @@ test('stats: all reviewed low-confidence fraying findings were rejected, and one
 });
 
 test('curator (rule-based, no model): proposes F1 once; accepting it changes the decision for finding 206', async () => {
-  const saved = { gemini: process.env.GEMINI_MODEL };
-  delete process.env.GEMINI_MODEL;
+  const saved = { agent: process.env.AGENT_MODEL };
+  delete process.env.AGENT_MODEL;
   try {
     const store = new Store(':memory:');
     const first = await runCurator(store, TODAY);
@@ -29,7 +29,7 @@ test('curator (rule-based, no model): proposes F1 once; accepting it changes the
     assert.equal(decideFinding(findingById(206), store.config()).kind, 'SAMPLE_MORE');
     assert.equal(penDecisions(5, 84, store.config(), new Map()).rulesVersion, 'v2 (F1 < 0.6)');
   } finally {
-    if (saved.gemini !== undefined) process.env.GEMINI_MODEL = saved.gemini;
+    if (saved.agent !== undefined) process.env.AGENT_MODEL = saved.agent;
   }
 });
 
