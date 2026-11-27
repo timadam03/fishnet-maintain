@@ -1075,10 +1075,6 @@ h3 {
   font-size: 13px;
 }
 
-.scene-label.site-label {
-  margin: -34px 0 0 -10px;
-  font-weight: 600;
-}
 
 .site3d.focused .scene-labels {
   display: none;
@@ -1125,3 +1121,59 @@ h3 {
   display: none;
 }
 
+
+/* Pen markers on the 3D site: a number chip, with a pin above pens that need attention. */
+.site-marker {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: -62px 0 0 -13px;
+  pointer-events: none;
+}
+
+.site3d.focused .site-marker {
+  display: none;
+}
+
+.pen-chip {
+  min-width: 22px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.pin {
+  filter: drop-shadow(0 2px 3px rgba(29, 29, 27, 0.25));
+  margin-bottom: 2px;
+}
+
+.pin path:first-child {
+  stroke: #fff;
+  stroke-width: 1.5;
+}
+
+.pin-hole path:first-child {
+  fill: var(--risk-critical);
+}
+
+.pin-high path:first-child {
+  fill: var(--risk-high);
+}
+
+.pin .glyph {
+  stroke: #fff;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  fill: none;
+}
+
+.pin .glyph-fill {
+  fill: #fff;
+}

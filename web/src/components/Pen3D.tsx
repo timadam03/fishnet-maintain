@@ -25,7 +25,7 @@ import {
 import type { Drone } from '../data/swarm';
 import { NET_OPACITY, environment } from '../lib/environment';
 import { paintNetTexture } from '../lib/heat';
-import { ROBOT_COLOR, placeholderGeometry, robotTemplate } from '../lib/robotModel';
+import { ROBOT_RENDER_ORDER, robotGeometry, robotMaterial } from '../lib/robotModel';
 import { buildNetGeometry, netPoint, radiusAt } from '../lib/netGeometry';
 import type { LayerDef, LayerGrid } from '../lib/layers';
 import { color } from '../lib/tokens';
@@ -447,7 +447,7 @@ export default function Pen3D({
       scene.traverse((o) => {
         if (o.userData.shared) return; // the shared robot model stays loaded for the next view
         if (o instanceof THREE.Mesh || o instanceof THREE.Line || o instanceof THREE.Points) {
-          if (!o.userData.sharedGeometry) o.geometry.dispose();
+          o.geometry.dispose();
           const m = o.material as THREE.Material | THREE.Material[];
           (Array.isArray(m) ? m : [m]).forEach((x) => x.dispose());
         }
@@ -549,55 +549,36 @@ export default function Pen3D({
     c.animate(timeRef.current);
   }, [currentDir]);
 
-  // Drone bodies: the BlueROV2 model, drawn about 10× its real 0.45 m so it reads at pen scale.
-  // The selected drone gets a ring.
+  // Drone bodies: the shared BlueROV2-style model, drawn about 10× its real 0.46 m so it reads at
+  // pen scale. The selected drone gets a ring.
   useEffect(() => {
     const c = ctx.current;
     if (!c) return;
-    let alive = true;
     c.droneGroup.children.forEach((g) =>
       g.traverse((o) => {
         if (o instanceof THREE.Mesh && !o.userData.shared) {
-          if (!o.userData.sharedGeometry) o.geometry.dispose();
+          o.geometry.dispose();
           (o.material as THREE.Material).dispose();
         }
       }),
     );
     c.droneGroup.clear();
-    const bodies: THREE.Mesh[] = [];
     for (const d of drones) {
       const g = new THREE.Group();
       g.userData.droneId = d.id;
-      const body = new THREE.Mesh(placeholderGeometry, new THREE.MeshLambertMaterial({ color: ROBOT_COLOR }));
-      body.userData.sharedGeometry = true;
+      const body = new THREE.Mesh(robotGeometry, robotMaterial);
+      body.userData.shared = true;
+      body.renderOrder = ROBOT_RENDER_ORDER;
       body.scale.setScalar(4.5);
       g.add(body);
-      bodies.push(body);
       if (d.id === selectedDrone) {
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(2, 0.12, 8, 32), new THREE.MeshBasicMaterial({ color: color.signal }));
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(3, 0.12, 8, 32), new THREE.MeshBasicMaterial({ color: color.signal }));
         ring.rotation.x = Math.PI / 2;
         g.add(ring);
       }
       c.droneGroup.add(g);
     }
     c.animate(timeRef.current);
-    robotTemplate().then(
-      (template) => {
-        if (!alive) return;
-        bodies.forEach((b) => {
-          const model = template.clone();
-          model.scale.multiplyScalar(4.5);
-          b.parent?.add(model);
-          b.removeFromParent();
-          (b.material as THREE.Material).dispose();
-        });
-        c.render();
-      },
-      (err) => console.warn('BlueROV2 model failed to load; showing placeholder boxes', err),
-    );
-    return () => {
-      alive = false;
-    };
   }, [drones, selectedDrone]);
 
   // Live mode: drones sweep and the current drifts, at about 30 frames a second.

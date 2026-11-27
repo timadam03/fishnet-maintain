@@ -61,14 +61,17 @@ export function paintTerrain(canvas: HTMLCanvasElement, env: Environment): void 
   const mix = (a: number[], b: number[], t: number): number[] => a.map((c, k) => c + (b[k] - c) * Math.max(0, Math.min(1, t)));
   // Light from the north-west, as on printed relief maps.
   const light = [-0.55, 0.7, -0.45];
+  // Heights sampled once on a grid one pixel larger, so slopes come from neighbours (one evaluation per pixel).
+  const grid = new Float32Array((w + 1) * (h + 1));
+  for (let py = 0; py <= h; py++) {
+    for (let px = 0; px <= w; px++) grid[py * (w + 1) + px] = heightAt(-TERRAIN.width / 2 + px * sx, -TERRAIN.depth / 2 + py * sz);
+  }
   const img = ctx.createImageData(w, h);
   for (let py = 0; py < h; py++) {
     for (let px = 0; px < w; px++) {
-      const x = -TERRAIN.width / 2 + px * sx;
-      const z = -TERRAIN.depth / 2 + py * sz;
-      const v = heightAt(x, z);
-      const dx = (heightAt(x + sx, z) - v) / sx;
-      const dz = (heightAt(x, z + sz) - v) / sz;
+      const v = grid[py * (w + 1) + px];
+      const dx = (grid[py * (w + 1) + px + 1] - v) / sx;
+      const dz = (grid[(py + 1) * (w + 1) + px] - v) / sz;
       const slope = Math.hypot(dx * sx, dz * sz) || 1e-6; // metres per pixel
       let base: number[];
       if (v >= 0) {

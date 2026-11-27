@@ -11,10 +11,9 @@ import type { Drone } from '../data/swarm';
 import { paintNetTexture } from '../lib/heat';
 import { computeLayerGrid, layerById } from '../lib/layers';
 import { buildNetGeometry, netPoint } from '../lib/netGeometry';
-import { ROBOT_COLOR, placeholderGeometry, robotTemplate } from '../lib/robotModel';
+import { ROBOT_RENDER_ORDER, robotGeometry, robotMaterial } from '../lib/robotModel';
 import { NET_OPACITY, environment as env } from '../lib/environment';
 import { TERRAIN, heightAt, paintTerrain } from '../lib/terrain';
-import { riskColor } from '../lib/layers';
 import { color } from '../lib/tokens';
 
 interface Props {
@@ -25,7 +24,7 @@ interface Props {
   drones: Drone[];
   /** The pen the user opened: the camera flies down into it, then the pen view takes over. */
   focusPen: number | null;
-  /** Worst hole risk per pen today, for the risk rings and labels. */
+  /** Worst hole risk per pen today, for the pins above pens that need attention. */
   penRisk: number[];
   onOpenPen: (penIndex: number) => void;
   onSelectDrone: (id: string) => void;
@@ -49,7 +48,6 @@ interface SceneCtx {
   textures: { canvas: HTMLCanvasElement; texture: THREE.CanvasTexture }[];
   collars: THREE.Mesh<THREE.TorusGeometry, THREE.MeshLambertMaterial>[];
   droneGroup: THREE.Group;
-  halos: THREE.Mesh<THREE.TorusGeometry, THREE.MeshBasicMaterial>[];
   animate: (t: number) => void;
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
@@ -91,8 +89,8 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
 
     // Surroundings: shore, headland, island and seabed, painted like a sea chart.
     const terrainCanvas = document.createElement('canvas');
-    terrainCanvas.width = 2048;
-    terrainCanvas.height = 1664;
+    terrainCanvas.width = 1536;
+    terrainCanvas.height = 1248;
 
     paintTerrain(terrainCanvas, env); // painted here, so the scene never shows an unpainted (black) terrain
     const terrainTexture = new THREE.CanvasTexture(terrainCanvas);
@@ -113,16 +111,6 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
     surface.rotation.x = -Math.PI / 2;
     scene.add(surface);
 
-    // Risk markers: a thin ring floating just above the collar of pens at elevated risk or worse.
-    // A marker rather than a tint on the water, which read like blood.
-    const halos = world.pens.map((_, i) => {
-      const m = new THREE.Mesh(new THREE.TorusGeometry(R + 7, 0.55, 8, 96), new THREE.MeshBasicMaterial({ transparent: true }));
-      m.rotation.x = Math.PI / 2;
-      m.position.copy(penPosition(world, i)).setY(2.2);
-      m.visible = false;
-      scene.add(m);
-      return m;
-    });
 
     // Pens: textured net, collar, mooring frame.
     const netGeometry = buildNetGeometry();
@@ -295,7 +283,7 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
     el.addEventListener('pointerup', onUp);
     el.addEventListener('pointermove', onMove);
 
-    ctx.current = { render, textures, collars, droneGroup, halos, animate, camera, controls };
+    ctx.current = { render, textures, collars, droneGroup, animate, camera, controls };
     resize();
 
     return () => {
@@ -307,7 +295,7 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
       scene.traverse((o) => {
         if (o.userData.shared) return; // the shared robot model stays loaded for the next view
         if (o instanceof THREE.Mesh || o instanceof THREE.Line || o instanceof THREE.Points) {
-          if (!o.userData.sharedGeometry) o.geometry.dispose();
+          o.geometry.dispose();
           const m = o.material as THREE.Material | THREE.Material[];
           (Array.isArray(m) ? m : [m]).forEach((x) => x.dispose());
         }
@@ -340,18 +328,6 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
     c.animate(timeRef.current);
   }, [world, day, open]);
 
-  // Rings coloured by each pen's worst risk; calm pens get none.
-  useEffect(() => {
-    const c = ctx.current;
-    if (!c) return;
-    c.halos.forEach((m, i) => {
-      const r = penRisk[i] ?? 0;
-      m.visible = r >= 0.25;
-      m.material.color.set(riskColor(Math.max(r, 0.35)));
-      m.material.opacity = r >= 0.5 ? 0.95 : 0.7;
-    });
-    c.animate(timeRef.current);
-  }, [penRisk]);
 
   // Highlight the hovered pen's collar.
   useEffect(() => {
@@ -361,47 +337,23 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
     c.render();
   }, [hoverPen]);
 
-  // Drone bodies: the BlueROV2 model, enlarged so it reads at site scale.
+  // Drone bodies: the shared BlueROV2-style model, enlarged so it reads at site scale.
   useEffect(() => {
     const c = ctx.current;
     if (!c) return;
-    let alive = true;
-    c.droneGroup.children.forEach((g) =>
-      g.traverse((o) => {
-        if (o instanceof THREE.Mesh && !o.userData.shared) (o.material as THREE.Material).dispose();
-      }),
-    );
     c.droneGroup.clear();
     for (const d of drones) {
       const g = new THREE.Group();
       g.userData.droneId = d.id;
-      const box = new THREE.Mesh(placeholderGeometry, new THREE.MeshLambertMaterial({ color: ROBOT_COLOR }));
-      box.userData.sharedGeometry = true;
-      box.userData.droneId = d.id;
-      box.scale.setScalar(8);
-      g.add(box);
+      const body = new THREE.Mesh(robotGeometry, robotMaterial);
+      body.userData.shared = true;
+      body.renderOrder = ROBOT_RENDER_ORDER;
+      body.userData.droneId = d.id;
+      body.scale.setScalar(8);
+      g.add(body);
       c.droneGroup.add(g);
     }
     c.animate(timeRef.current);
-    robotTemplate().then(
-      (template) => {
-        if (!alive) return;
-        c.droneGroup.children.forEach((g) => {
-          const old = g.children[0] as THREE.Mesh;
-          (old.material as THREE.Material).dispose();
-          g.clear();
-          const model = template.clone();
-          model.scale.multiplyScalar(8);
-          model.traverse((o) => (o.userData.droneId = g.userData.droneId));
-          g.add(model);
-        });
-        c.render();
-      },
-      (err) => console.warn('BlueROV2 model failed to load; showing placeholder boxes', err),
-    );
-    return () => {
-      alive = false;
-    };
   }, [drones]);
 
   // Fly into the opened pen, or back out to the whole site.
@@ -457,15 +409,17 @@ export default function SiteScene3D({ world, day, live, open, drones, focusPen, 
         {world.pens.map((p, i) => {
           const holes = open.filter((f) => f.penId === p.id && f.kind === 'hole').length;
           const r = penRisk[i] ?? 0;
-          const flagged = holes > 0 || r >= 0.25;
+          const kind = holes ? 'hole' : r >= 0.5 ? 'high' : null;
+          const title = holes ? `${p.name}: hole open` : kind ? `${p.name}: high hole risk (${Math.round(r * 100)})` : p.name;
           return (
-            <span
-              key={p.id}
-              className={`scene-label site-label${holes ? ' hole' : ''}`}
-              style={flagged && !holes ? { borderColor: riskColor(Math.max(r, 0.35)) } : undefined}
-            >
-              {p.id}
-              {holes ? ', hole' : r >= 0.25 ? `, risk ${Math.round(r * 100)}` : ''}
+            <span key={p.id} className="site-marker" title={title}>
+              {kind && (
+                <svg className={`pin pin-${kind}`} width="26" height="34" viewBox="0 0 26 34" role="img" aria-label={title}>
+                  <path d="M13 33C13 33 2 20.5 2 12.5a11 11 0 0 1 22 0C24 20.5 13 33 13 33Z" />
+                  {kind === 'hole' ? <path d="M13 6.5v8M13 18v.5" className="glyph" /> : <path d="M13 6.8 7.6 16.2h10.8Z" className="glyph-fill" />}
+                </svg>
+              )}
+              <span className="pen-chip">{p.id}</span>
             </span>
           );
         })}
