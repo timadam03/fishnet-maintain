@@ -69,6 +69,13 @@ parser.add_argument("--preview", action="store_true", help="build the scene and 
 parser.add_argument("--lite", action="store_true",
                     help="low-end mode: 640x360 cameras, fewer rocks/fish, coarser net (8 GB GPU / 16 GB RAM)")
 parser.add_argument("--no-surface", action="store_true", help="hide the water surface plane")
+parser.add_argument("--defect-seed", type=int, default=7,
+                    help="seed for hole / thinning / fouling placement only. Vary it to generate a "
+                         "set of different nets for training; the rest of the scene is unaffected.")
+parser.add_argument("--scenery", action="store_true",
+                    help="keep the seabed, rocks, kelp and water surface in view. Off by default: an "
+                         "inspection frame should be net against flat water, nothing else, or the "
+                         "classifier learns the scenery. Turn it on for cinematic recording.")
 parser.add_argument("--no-fog", action="store_true", help="disable underwater haze")
 parser.add_argument("--brightness", type=float, default=1.0, help="scale dome + sun light (e.g. 2.0)")
 parser.add_argument("--auv-usd", default=None,
@@ -290,10 +297,13 @@ def torus(path, major, minor, z, mat, nu=160, nv=16):
 M = {
     # Light twine against the dark teal fog: the net has to separate from the background, or a
     # classifier trained on these frames learns the haze instead of the mesh.
-    "net": make_mat("net", (0.50, 0.46, 0.37), rough=0.75),
-    "net_thin": make_mat("net_thin", (0.61, 0.58, 0.51), rough=0.7),
-    "net_fouled": make_mat("net_fouled", (0.29, 0.23, 0.10), rough=0.95),
-    "rope": make_mat("rope", (0.58, 0.55, 0.49), rough=0.8),
+    # Dark twine against lit water. A pale net on a pale background is what washed the frames out;
+    # a dark net silhouettes, which is how real inspection footage reads and what a classifier can
+    # actually segment. Fouling is the one thing that gets lighter and warmer, so it separates.
+    "net": make_mat("net", (0.08, 0.12, 0.11), rough=0.75),
+    "net_thin": make_mat("net_thin", (0.17, 0.21, 0.19), rough=0.7),
+    "net_fouled": make_mat("net_fouled", (0.30, 0.25, 0.10), rough=0.95),
+    "rope": make_mat("rope", (0.16, 0.12, 0.07), rough=0.8),
     "hdpe": make_mat("hdpe", (0.03, 0.03, 0.03), rough=0.35),
     "steel": make_mat("steel", (0.55, 0.57, 0.6), rough=0.3, metal=0.9),
     "sand": make_mat("sand", (0.42, 0.38, 0.28), rough=0.95),
@@ -311,10 +321,12 @@ UsdGeom.Xform.Define(stage, "/World/Env")
 seabed = UsdGeom.Cube.Define(stage, "/World/Env/Seabed")
 seabed.CreateSizeAttr(1.0)
 set_xform(seabed, (0, 0, SEABED_Z - 0.5), s=(300, 300, 1))
-UsdPhysics.CollisionAPI.Apply(seabed.GetPrim())
+UsdPhysics.CollisionAPI.Apply(seabed.GetPrim())   # collision stays: the AUVs still cannot fall through
 bind(seabed, M["sand"])
+if not args.scenery:
+    UsdGeom.Imageable(seabed.GetPrim()).MakeInvisible()
 
-for i in range(15 if args.lite else (160 if args.hq else 70)):
+for i in range(0 if not args.scenery else (15 if args.lite else (160 if args.hq else 70))):
     r, a = rng.uniform(9, 70), rng.uniform(0, 2 * math.pi)
     rock = UsdGeom.Sphere.Define(stage, f"/World/Env/Rocks/rock_{i:02d}")
     rock.CreateRadiusAttr(1.0)
@@ -328,14 +340,16 @@ water = make_mesh("/World/Env/WaterSurface", [(-200, -200, 0), (200, -200, 0), (
 bind(water, M["water"])
 # the surface must never shadow the pen (it is meant to be a see-through visual only)
 UsdGeom.PrimvarsAPI(water.GetPrim()).CreatePrimvar("doNotCastShadows", Sdf.ValueTypeNames.Bool).Set(True)
-if args.no_surface:
+if args.no_surface or not args.scenery:
     UsdGeom.Imageable(water.GetPrim()).MakeInvisible()
 
+# With the scenery hidden, the dome is the only thing behind the net: its colour is the flat blue
+# the net is seen against, and it lights the net at the same time.
 dome = UsdLux.DomeLight.Define(stage, "/World/Env/Dome")
-dome.CreateIntensityAttr(450.0 * args.brightness)
-dome.CreateColorAttr(Gf.Vec3f(0.16, 0.40, 0.50))
+dome.CreateIntensityAttr((900.0 if not args.scenery else 450.0) * args.brightness)
+dome.CreateColorAttr(Gf.Vec3f(0.22, 0.46, 0.52))
 sun = UsdLux.DistantLight.Define(stage, "/World/Env/Sun")
-sun.CreateIntensityAttr(3000.0 * args.brightness)
+sun.CreateIntensityAttr((1200.0 if not args.scenery else 3000.0) * args.brightness)
 sun.CreateAngleAttr(2.0)
 sun.CreateColorAttr(Gf.Vec3f(0.8, 0.95, 1.0))
 set_xform(sun, r=(15, 10, 0))
@@ -343,7 +357,7 @@ set_xform(sun, r=(15, 10, 0))
 # underwater haze (RTX distance fog). If you see no fog: Render Settings > Common > Fog.
 settings = carb.settings.get_settings()
 for key, val in {
-    "/rtx/fog/enabled": not args.no_fog,
+    "/rtx/fog/enabled": bool(args.scenery) and not args.no_fog,
     "/rtx/fog/fogColor": [0.015, 0.105, 0.135],
     "/rtx/fog/fogColorIntensity": 1.0,
     "/rtx/fog/fogStartDist": max(1.5, STANDOFF * 1.3),
@@ -353,7 +367,7 @@ for key, val in {
     settings.set(key, val)
 
 # kelp / seaweed strands outside the pen (visual only)
-N_KELP = 0 if args.lite else (140 if args.hq else 50)
+N_KELP = 0 if (args.lite or not args.scenery) else (140 if args.hq else 50)
 kelp_mats = [make_mat(f"kelp_{i}", c, rough=0.7) for i, c in
              enumerate([(0.10, 0.22, 0.06), (0.16, 0.20, 0.05), (0.08, 0.17, 0.09)])]
 for i in range(N_KELP):
@@ -393,6 +407,10 @@ def cyl(u, v):
 
 # ----------------------------------------------------------------------------- defects
 # Ground truth. (u, v) = arc length around the pen and depth; u wraps at the circumference.
+# Its own generator on purpose: `rng` is also drawn by the rocks and kelp, whose counts depend on
+# --lite and --scenery, so sharing it meant a flag that only changed scene dressing silently moved
+# every hole. Defect layout now depends on --defect-seed and nothing else.
+drng = np.random.default_rng(args.defect_seed)
 U_MAX = 2 * math.pi * CAGE_R
 
 
@@ -416,9 +434,9 @@ def place_patches(n, rmin, rmax, taken, margin=0.5):
     out = []
     for _ in range(n):
         for _try in range(400):
-            r = float(rng.uniform(rmin, rmax))
-            u = float(rng.uniform(0, U_MAX))
-            v = float(rng.uniform(-CAGE_DEPTH + r + 0.4, -r - 0.4))
+            r = float(drng.uniform(rmin, rmax))
+            u = float(drng.uniform(0, U_MAX))
+            v = float(drng.uniform(-CAGE_DEPTH + r + 0.4, -r - 0.4))
             if all(patch_dist(u, v, pu, pv) > r + pr + margin for pu, pv, pr in taken + out):
                 out.append((u, v, r))
                 break
@@ -435,13 +453,13 @@ HOLES = []  # (row, col, u, v, radius)
 for i, hr in enumerate(HOLE_RADII[:N_HOLES]):
     if i < min(2, len(THIN)):
         pu, pv, pr = THIN[i]
-        a = float(rng.uniform(0, 2 * math.pi))
-        d = float(rng.uniform(0, max(0.0, pr - hr - 0.1)))
+        a = float(drng.uniform(0, 2 * math.pi))
+        d = float(drng.uniform(0, max(0.0, pr - hr - 0.1)))
         u = (pu + d * math.cos(a)) % U_MAX
         v = min(-hr - 0.3, max(-CAGE_DEPTH + hr + 0.3, pv + d * math.sin(a)))
     else:
-        u = float(rng.uniform(0, U_MAX))
-        v = float(rng.uniform(-CAGE_DEPTH + hr + 0.4, -hr - 0.4))
+        u = float(drng.uniform(0, U_MAX))
+        v = float(drng.uniform(-CAGE_DEPTH + hr + 0.4, -hr - 0.4))
     r, c = panel_of(u, v)
     HOLES.append((r, c, u, v, float(hr)))
 
@@ -941,7 +959,7 @@ for k in range(N_AUV):
     os.makedirs(os.path.join(args.out, f"auv_{k}"), exist_ok=True)
 meta_file = open(os.path.join(args.out, "captures.jsonl"), "w")
 with open(os.path.join(args.out, "ground_truth.json"), "w") as f:
-    json.dump({"run_id": RUN_ID,
+    json.dump({"run_id": RUN_ID, "defect_seed": args.defect_seed,
                "grid": {"ui_sectors": UI_SECTORS, "ui_wall_rows": UI_WALL_ROWS,
                         "cage_radius_m": CAGE_R, "cage_depth_m": CAGE_DEPTH},
                "holes": [{"panel": f"r{r}_c{c:02d}", "cell": ui_cell(hu / CAGE_R, hv),
