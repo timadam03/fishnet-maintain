@@ -1336,8 +1336,13 @@ while simulation_app.is_running():
         set_cam_rendering(k, False)
         s["cam_on"] = False
         wp = plans[k][s["wp"]]
+        # fname keeps forward slashes: it is a relative path recorded in captures.jsonl and
+        # read back on any platform. The path we actually write is built with os.path.join,
+        # because mixing separators ("...\\auv_1/img.png") is rejected on Windows.
         fname = f"auv_{k}/img_{counts[k]:04d}.png"
-        Image.fromarray(data).save(os.path.join(args.out, fname))
+        out_png = os.path.join(args.out, f"auv_{k}", f"img_{counts[k]:04d}.png")
+        os.makedirs(os.path.dirname(out_png), exist_ok=True)
+        Image.fromarray(data).save(out_png)
         lab = label(wp["theta"], wp["z"])
         rec = {"image": fname, "run_id": RUN_ID, "auv": k, "sim_time": round(t, 3), "band": wp["band"],
                "theta_deg": round(math.degrees(wp["theta"]) % 360, 2), "depth": wp["z"],
