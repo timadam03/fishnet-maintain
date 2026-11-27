@@ -98,10 +98,11 @@ npm run cli -- plan                           # the next plan escalates what's s
 ```
 
 **Over HTTP**, with `npm run serve`:
-- `POST /api/observations` with `{pen_id, captures, reports}`
+- `POST /api/observations` with `{pen_id, captures, reports, grid?}`, where `grid` is the object from `ground_truth.json`
 - `GET /api/plan?pen=7&robots=3`
 
 **Notes:**
+- **One importer.** `decision-layer/src/inspection.ts` is the only importer. Einar's earlier `ingest.ts` is not used; its grid check now lives here. Before anything is stored, an import is refused if the run's grid (`ground_truth.json` → `grid.ui_sectors`, `grid.ui_wall_rows`) isn't 24 × 8.
 - **Isaac pen = UI Pen 7** (the sag case). Set `ISAAC_PEN` to change it.
 - **The stand-in grader** (`scripts/stand-in-vision.ts`) turns Isaac's ground truth into reports using a simple camera model: closer means more confident, and fouling hides holes. Use it to test the loop; its output is labelled `stand-in-ground-truth` and is not a detection.
 

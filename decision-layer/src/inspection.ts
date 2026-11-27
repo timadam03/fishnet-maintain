@@ -39,6 +39,20 @@ export interface Observation {
   detections: VisionReport['detections'];
 }
 
+/**
+ * Stops an import whose run was made on a different cell grid (from Einar's ingest.ts). Without it,
+ * cell numbers still parse and silently point at the wrong part of the net.
+ */
+export function assertGridMatches(grid: { ui_sectors?: number; ui_wall_rows?: number } | undefined): void {
+  if (!grid) return;
+  if (grid.ui_sectors !== GRID.sectors || grid.ui_wall_rows !== GRID.wallRows) {
+    throw new Error(
+      `grid mismatch: run is ${grid.ui_sectors}x${grid.ui_wall_rows}, decision layer is ${GRID.sectors}x${GRID.wallRows}. ` +
+        'Fix UI_SECTORS / UI_WALL_ROWS in fishfarm_demo.py, or ANGLE_SECTORS / WALL_ROWS in web/src/data/model.ts.',
+    );
+  }
+}
+
 export interface ImportResult {
   imported: number;
   /** Captures with no vision report yet: not evidence of anything, so they are left out. */
@@ -53,8 +67,9 @@ export interface ImportResult {
  */
 export function importObservations(
   store: Store,
-  input: { penId: number; captures: unknown[]; reports: unknown[]; cageRadiusM?: number },
+  input: { penId: number; captures: unknown[]; reports: unknown[]; cageRadiusM?: number; grid?: { ui_sectors?: number; ui_wall_rows?: number } },
 ): ImportResult {
+  assertGridMatches(input.grid);
   const captures = new Map(input.captures.map((c) => SimCapture.parse(c)).map((c) => [c.image, c]));
   const reports = input.reports.map((r) => VisionReport.parse(r));
   const unmatchedReports: string[] = [];

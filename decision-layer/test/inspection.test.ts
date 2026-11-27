@@ -46,6 +46,15 @@ test('contracts reject bad input instead of guessing', () => {
   assert.deepEqual(result.unmatchedReports, ['nowhere.png']);
 });
 
+test('a run made on a different cell grid is refused before anything is stored', () => {
+  const store = new Store(':memory:');
+  const caps = firstPass();
+  const reports = caps.map((c) => standInReport(c, R));
+  assert.throws(() => importObservations(store, { penId: PEN, captures: caps, reports, grid: { ui_sectors: 12, ui_wall_rows: 3 } }), /grid mismatch: run is 12x3/);
+  assert.equal(observations(store, { penId: PEN }).length, 0);
+  assert.equal(importObservations(store, { penId: PEN, captures: caps, reports, grid: { ui_sectors: 24, ui_wall_rows: 8 } }).imported, 5);
+});
+
 test('first pass: each cell gets the right status', () => {
   const store = new Store(':memory:');
   importAll(store, firstPass());
