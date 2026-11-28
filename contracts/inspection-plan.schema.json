@@ -75,13 +75,13 @@
           },
           "theta_deg": {
             "type": "number",
-            "description": "Centre of the cell"
+            "description": "Where the camera should look: the defect's position when a detection placed it (rule A1), else the cell centre"
           },
           "depth_frac": {
             "type": "number",
             "minimum": 0,
             "maximum": 1,
-            "description": "Centre of the cell as a fraction of the net wall depth (0 = surface)"
+            "description": "Same point, as a fraction of the net wall depth (0 = surface)"
           },
           "priority": {
             "type": "number",

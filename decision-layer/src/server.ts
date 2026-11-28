@@ -77,11 +77,12 @@ async function route(req: IncomingMessage, url: URL): Promise<unknown> {
   if (method === 'POST' && path === '/api/observations') {
     // Isaac captures + image-pipeline reports (contracts.ts); closes missions whose photos came back.
     const b = await body(req, z.object({
-      pen_id: z.number().int(), captures: z.array(z.unknown()).default([]), reports: z.array(z.unknown()), cage_radius_m: z.number().positive().optional(),
+      pen_id: z.number().int(), captures: z.array(z.unknown()).default([]), reports: z.array(z.unknown()),
+      cage_radius_m: z.number().positive().optional(), cage_depth_m: z.number().positive().optional(),
       grid: z.object({ ui_sectors: z.number().int(), ui_wall_rows: z.number().int() }).optional().describe('The "grid" object from ground_truth.json'),
     }));
     try {
-      return importObservations(store, { penId: b.pen_id, captures: b.captures, reports: b.reports, cageRadiusM: b.cage_radius_m, grid: b.grid });
+      return importObservations(store, { penId: b.pen_id, captures: b.captures, reports: b.reports, cageRadiusM: b.cage_radius_m, cageDepthM: b.cage_depth_m, grid: b.grid });
     } catch (error) {
       if (error instanceof z.ZodError || (error instanceof Error && error.message.startsWith('grid mismatch'))) throw new HttpError(400, error.message);
       throw error;

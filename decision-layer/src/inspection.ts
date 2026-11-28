@@ -23,6 +23,21 @@ const WEAR = new Set(['fraying', 'thinning', 'distortion', 'rope_contact']);
 /** Vehicle radius (safe_nav.py) plus slack: a photo spot closer to the net than margin + this can't be reached. */
 const REACH_SLACK_M = 0.55;
 const STRONG_CURRENT_CM_S = 30;
+/** Two aim points this close are one spot (about 0.4 m on Isaac's 8 m pen). Demo value. */
+const SAME_SPOT = { thetaDeg: 3, depthFrac: 0.05 };
+/**
+ * Isaac's ROV camera: 18 mm lens on a 20.955 mm aperture, 16:9 (fishfarm_demo.py). Used to turn a
+ * detection's position in the image into a position on the net.
+ */
+export const ISAAC_CAMERA = { hfovDeg: 60.41, vfovDeg: 36.26 };
+
+/** Where a detection sits on the net, worked out from where it is in the image. */
+export interface Placement {
+  theta_deg: number;
+  depth_frac: number;
+  cell: number;
+}
+type Detection = VisionReport['detections'][number] & { at?: Placement };
 
 export interface Observation {
   runId: string;
@@ -36,7 +51,45 @@ export interface Observation {
   model: string;
   quality: { visibility: number; sharpness: number } | null;
   fouling: number | null;
-  detections: VisionReport['detections'];
+  detections: Detection[];
+}
+
+const deg = (rad: number): number => (rad * 180) / Math.PI;
+const rad = (d: number): number => (d * Math.PI) / 180;
+
+/**
+ * The image centre is at (theta_deg, depth) on the net: the camera looks horizontally at the net
+ * (Isaac's ROVs only yaw). An offset of ±1 is half the footprint, which grows with the standoff.
+ */
+export function place(
+  capture: { theta_deg: number; depth: number },
+  standoffM: number,
+  offset: [number, number],
+  pen: { radiusM: number; depthM: number },
+  camera = ISAAC_CAMERA,
+): Placement {
+  const halfW = standoffM * Math.tan(rad(camera.hfovDeg / 2));
+  const halfH = standoffM * Math.tan(rad(camera.vfovDeg / 2));
+  const theta = (((capture.theta_deg + deg((offset[0] * halfW) / pen.radiusM)) % 360) + 360) % 360;
+  const depthFrac = Math.min(0.9999, Math.max(0, -(capture.depth - offset[1] * halfH) / pen.depthM));
+  const cell = Math.floor(depthFrac * GRID.wallRows) * GRID.sectors + Math.floor(theta / (360 / GRID.sectors));
+  return { theta_deg: Number(theta.toFixed(2)), depth_frac: Number(depthFrac.toFixed(4)), cell };
+}
+
+/**
+ * Evidence per cell. A detection counts for the cell it sits in, which can be a neighbour of the
+ * cell the photo was aimed at; the rest of the photo (quality, "nothing else here") counts for the
+ * aimed cell.
+ */
+export function evidenceByCell(obs: Observation[]): Map<number, Observation[]> {
+  const out = new Map<number, Observation[]>();
+  const add = (cell: number, o: Observation): void => void out.set(cell, [...(out.get(cell) ?? []), o]);
+  for (const o of obs) {
+    const elsewhere = o.detections.filter((d) => d.at && d.at.cell !== o.cell);
+    add(o.cell, elsewhere.length ? { ...o, detections: o.detections.filter((d) => !elsewhere.includes(d)) } : o);
+    for (const d of elsewhere) add(d.at!.cell, { ...o, cell: d.at!.cell, detections: [d] });
+  }
+  return out;
 }
 
 /**
@@ -67,7 +120,15 @@ export interface ImportResult {
  */
 export function importObservations(
   store: Store,
-  input: { penId: number; captures: unknown[]; reports: unknown[]; cageRadiusM?: number; grid?: { ui_sectors?: number; ui_wall_rows?: number } },
+  input: {
+    penId: number;
+    captures: unknown[];
+    reports: unknown[];
+    cageRadiusM?: number;
+    /** Net wall depth of the run's pen, to place detections by depth (ground_truth.json grid.cage_depth_m). */
+    cageDepthM?: number;
+    grid?: { ui_sectors?: number; ui_wall_rows?: number };
+  },
 ): ImportResult {
   assertGridMatches(input.grid);
   const captures = new Map(input.captures.map((c) => SimCapture.parse(c)).map((c) => [c.image, c]));
@@ -86,10 +147,12 @@ export function importObservations(
       continue;
     }
     const standoff = c && input.cageRadiusM ? Number((input.cageRadiusM - Math.hypot(c.position[0], c.position[1])).toFixed(2)) : null;
+    const pen = { radiusM: input.cageRadiusM ?? 8, depthM: input.cageDepthM ?? 8 };
+    const detections: Detection[] = r.detections.map((d) => (c && standoff !== null && d.offset ? { ...d, at: place(c, standoff, d.offset, pen) } : d));
     const res = insert.run(
       c?.run_id ?? 'external', r.image, r.where?.pen_id ?? input.penId, c?.cell ?? r.where!.cell, c?.auv ?? r.where?.auv ?? null,
       c?.sim_time ?? null, standoff, c?.target_id ?? null, r.model, r.quality ? JSON.stringify(r.quality) : null,
-      r.fouling_pct ?? null, JSON.stringify(r.detections), new Date().toISOString(),
+      r.fouling_pct ?? null, JSON.stringify(detections), new Date().toISOString(),
     );
     imported += Number(res.changes);
     if (c?.target_id) touchedTargets.add(c.target_id);
@@ -165,18 +228,20 @@ function closeMissions(store: Store, targetIds: Set<string>): ImportResult['miss
   for (const targetId of targetIds) {
     const missionId = Number(targetId.match(/^m(\d+)$/)?.[1]);
     if (!missionId) continue;
-    const row = store.db.prepare('SELECT pen_id, status FROM missions WHERE id = ?').get(missionId) as { pen_id: number; status: string } | undefined;
+    const row = store.db.prepare('SELECT pen_id, status, cells_json FROM missions WHERE id = ?').get(missionId) as { pen_id: number; status: string; cells_json: string } | undefined;
     if (!row || row.status === 'done' || row.status === 'cancelled') continue;
-    const obs = observations(store, { penId: row.pen_id, targetId });
-    if (obs.length === 0) continue;
-    const a = assessCell(obs[0].cell, obs);
+    const taken = observations(store, { penId: row.pen_id, targetId });
+    if (taken.length === 0) continue;
+    const cell = (JSON.parse(row.cells_json) as number[])[0] ?? taken[0].cell;
+    const obs = evidenceByCell(taken).get(cell) ?? [];
+    const a = assessCell(cell, obs);
     const result =
       a.status === 'confirmed_opening' ? `confirmed: opening seen from ${a.openingViews} viewpoints (best p=${a.opening.toFixed(2)})`
       : a.status === 'possible_opening' ? `possible opening (p=${a.opening.toFixed(2)}), one view only`
       : a.status === 'wear' ? `confirmed: wear sign (p=${a.wear.toFixed(2)})`
       : a.status === 'clear' ? `clear: ${a.images} good image${a.images > 1 ? 's' : ''}, nothing found`
       : `${a.status}: needs another look`;
-    const robots = [...new Set(obs.map((o) => o.auv).filter((x): x is number => x !== null))].map((k) => `AUV-${k}`).join(', ');
+    const robots = [...new Set(taken.map((o) => o.auv).filter((x): x is number => x !== null))].map((k) => `AUV-${k}`).join(', ');
     updateMission(store, missionId, { status: 'done', robot: robots || undefined, result });
     closed.push({ missionId, result });
   }
@@ -240,6 +305,15 @@ function merge(profiles: Profile[], marginBoost: number): Profile & { reasons: P
 
 const angleDist = (a: number, b: number): number => Math.abs(((a - b + 540) % 360) - 180);
 
+/** Where the most confident placed defect in this cell's evidence is, if any. */
+function aimAt(obs: Observation[]): Placement | null {
+  let best: Detection | null = null;
+  for (const o of obs) for (const d of o.detections) {
+    if (d.at && (OPENING.has(d.class) || WEAR.has(d.class)) && (!best || d.confidence > best.confidence)) best = d;
+  }
+  return best?.at ?? null;
+}
+
 /**
  * Builds the plan for one pen: targets best first, robots assigned so each goes where it is
  * closest and least busy, and two robots on anything that needs two perspectives.
@@ -248,22 +322,37 @@ export function buildPlan(store: Store, input: { penId: number; day: number; rob
   const nRobots = input.robots ?? 3;
   const sim = penSim(input.penId);
   const strongCurrent = world.env.currentSpeed[input.day] >= STRONG_CURRENT_CM_S;
-  const byCell = new Map<number, Observation[]>();
-  for (const o of observations(store, { penId: input.penId })) byCell.set(o.cell, [...(byCell.get(o.cell) ?? []), o]);
+  const byCell = evidenceByCell(observations(store, { penId: input.penId }));
 
-  const candidates: Array<ReturnType<typeof merge> & { cell: number; risk: number }> = [];
+  const candidates: Array<ReturnType<typeof merge> & { cell: number; risk: number; aim: Placement | null }> = [];
   for (let cell = 0; cell < GRID.sectors * GRID.wallRows; cell++) {
     const obs = byCell.get(cell);
     const risk = explainRisk(sim, cell, input.day);
-    const profiles = profilesFor(obs ? assessCell(cell, obs) : null, risk);
+    const assessment = obs ? assessCell(cell, obs) : null;
+    const profiles = profilesFor(assessment, risk);
     if (profiles.length === 0) continue;
     const merged = merge(profiles, strongCurrent ? 0.4 : 0);
     if (strongCurrent) merged.reasons.push({ rule: 'G1', text: `Strong current (${world.env.currentSpeed[input.day].toFixed(0)} cm/s): margin +0.4 m.` });
-    candidates.push({ ...merged, cell, risk: risk.score });
+    const aim = obs && assessment && ['possible_opening', 'uncertain', 'wear'].includes(assessment.status) ? aimAt(obs) : null;
+    if (aim) merged.reasons.push({ rule: 'A1', text: `Aimed at the detection itself (${aim.theta_deg}°, ${Math.round(aim.depth_frac * 100)}% down), not the area centre.` });
+    candidates.push({ ...merged, cell, risk: risk.score, aim });
   }
   // Ties go to the riskier area, not the lower cell number.
   candidates.sort((a, b) => b.priority - a.priority || b.risk - a.risk || a.cell - b.cell);
-  const chosen = candidates.slice(0, input.maxTargets ?? 10);
+  // M1: one physical spot on an area boundary must not become two missions. A lower-ranked target
+  // aimed within SAME_SPOT of a higher-ranked one is folded into it.
+  const kept: typeof candidates = [];
+  for (const c of candidates) {
+    const host = c.aim && kept.find((k) => k.aim && angleDist(k.aim.theta_deg, c.aim!.theta_deg) < SAME_SPOT.thetaDeg && Math.abs(k.aim.depth_frac - c.aim!.depth_frac) < SAME_SPOT.depthFrac);
+    if (!host) {
+      kept.push(c);
+      continue;
+    }
+    host.reasons.push({ rule: 'M1', text: `Same spot as a ${c.reasons[0].rule} finding in the neighbouring area (cell ${c.cell}): covered by this target.` });
+    host.safety = { margin_m: Math.max(host.safety.margin_m, c.safety.margin_m) };
+    host.scan = { ...host.scan, standoff_m: Number(Math.max(host.scan.standoff_m, host.safety.margin_m + REACH_SLACK_M).toFixed(2)) };
+  }
+  const chosen = kept.slice(0, input.maxTargets ?? 10);
 
   // Robots start in the middle of their usual sector; each pick moves the robot and adds load.
   const robot = Array.from({ length: nRobots }, (_, k) => ({ id: k, at: ((k + 0.5) * 360) / nRobots, load: 0 }));
@@ -278,8 +367,8 @@ export function buildPlan(store: Store, input: { penId: number; day: number; rob
       day: input.day, penId: input.penId, kind: t.kind, cells: [t.cell], priority: t.priority >= 0.8 ? 'high' : 'normal', reason: t.reasons.map((r) => r.text).join(' '),
     });
     return {
-      target_id: `m${missionId}`, mission_id: missionId, cell: t.cell, row, col, theta_deg: theta,
-      depth_frac: Number(((row + 0.5) / GRID.wallRows).toFixed(4)),
+      target_id: `m${missionId}`, mission_id: missionId, cell: t.cell, row, col, theta_deg: t.aim?.theta_deg ?? theta,
+      depth_frac: t.aim?.depth_frac ?? Number(((row + 0.5) / GRID.wallRows).toFixed(4)),
       priority: t.priority, priority_label: t.priority >= 0.8 ? 'high' : t.priority >= 0.5 ? 'normal' : 'low',
       reasons: [{ rule: 'area', text: `${label} (cell ${t.cell})` }, ...t.reasons],
       scan: t.scan, safety: t.safety, robots: picks.map((p) => p.id).sort((a, b) => a - b),

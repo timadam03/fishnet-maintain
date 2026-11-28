@@ -54,7 +54,11 @@ export const VisionReport = z.object({
       class: DetectionClass,
       confidence: unit,
       bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]).describe('[x, y, w, h] in pixels'),
-      severity: z.enum(['low', 'medium', 'high']).optional(),
+      offset: z
+        .tuple([z.number().min(-1).max(1), z.number().min(-1).max(1)])
+        .optional()
+        .describe('Centre of the detection relative to the image centre, -1..1, x right, y down (the classifier\'s dx, dy). Lets the layer place it on the right cell and aim close-ups at it'),
+      severity: z.union([z.enum(['low', 'medium', 'high']), unit]).optional(),
       size_m: z.number().min(0).optional().describe('Estimated size of the defect'),
       crop: z.string().optional(),
     }),
@@ -85,8 +89,8 @@ export const InspectionPlan = z.object({
       cell,
       row: z.number().int(),
       col: z.number().int(),
-      theta_deg: z.number().describe('Centre of the cell'),
-      depth_frac: unit.describe('Centre of the cell as a fraction of the net wall depth (0 = surface)'),
+      theta_deg: z.number().describe('Where the camera should look: the defect\'s position when a detection placed it (rule A1), else the cell centre'),
+      depth_frac: unit.describe('Same point, as a fraction of the net wall depth (0 = surface)'),
       priority: unit,
       priority_label: z.enum(['high', 'normal', 'low']),
       reasons: z.array(reason).min(1),

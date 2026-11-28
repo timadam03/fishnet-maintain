@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { standInReport } from '../scripts/stand-in-vision.ts';
 import { InspectionPlan, SimCapture, VisionReport, type PlanTarget } from '../src/contracts.ts';
-import { assessCell, buildPlan, importObservations, observations } from '../src/inspection.ts';
+import { assessCell, buildPlan, evidenceByCell, importObservations, observations, place } from '../src/inspection.ts';
 import { missions } from '../src/log.ts';
 import { Store } from '../src/store.ts';
 import { TODAY } from '../src/world.ts';
@@ -128,4 +128,55 @@ test('strong current widens every safety margin (G1)', () => {
   const storm = buildPlan(store, { penId: PEN, day: 59, robots: 3 }); // the simulated storm
   assert.equal(target(storm, 30)!.safety.margin_m, Number((target(calm, 30)!.safety.margin_m + 0.4).toFixed(2)));
   assert.ok(target(storm, 30)!.reasons.some((r) => r.rule === 'G1'));
+});
+
+test('placement: a detection at the edge of a 4 m photo sits in the next area, and the close-up aims at it', () => {
+  // The camera looks at cell 30's centre (97.5°); the detection is at the right edge of the image.
+  const at = place({ theta_deg: 97.5, depth: -1.5 }, 4, [1, 0], { radiusM: R, depthM: 8 });
+  assert.equal(at.cell, 31); // 105–120°: the neighbour
+  assert.ok(Math.abs(at.theta_deg - 114.17) < 0.05);
+
+  const store = new Store(':memory:');
+  const sweep = capture('run1', 1, 30, SWEEP);
+  importObservations(store, {
+    penId: PEN, cageRadiusM: R, cageDepthM: 8, captures: [sweep],
+    reports: [{ image: sweep.image, model: 'net-classifier', quality: { visibility: 0.8, sharpness: 0.8 }, detections: [{ class: 'mesh_opening', confidence: 0.55, bbox: [1200, 330, 60, 60], offset: [1, 0], severity: 0.4 }] }],
+  });
+  const groups = evidenceByCell(observations(store, { penId: PEN }));
+  assert.equal(assessCell(30, groups.get(30)!).status, 'clear');
+  assert.equal(assessCell(31, groups.get(31)!).status, 'uncertain');
+
+  const plan = buildPlan(store, { penId: PEN, day: TODAY, robots: 3 });
+  const t = target(plan, 31)!;
+  assert.equal(target(plan, 30), undefined);
+  assert.ok(Math.abs(t.theta_deg - 114.17) < 0.05, `aimed at ${t.theta_deg}`);
+  assert.ok(t.reasons.some((r) => r.rule === 'A1'));
+
+  // The close-up aimed at the defect sees it in the middle of the frame: the mission closes on cell 31.
+  const close = SimCapture.parse({ ...capture('run2', 2, 31, t.scan.standoff_m, {}, 0, t.target_id), theta_deg: t.theta_deg });
+  const result = importObservations(store, {
+    penId: PEN, cageRadiusM: R, cageDepthM: 8, captures: [close],
+    reports: [{ image: close.image, model: 'net-classifier', quality: { visibility: 0.9, sharpness: 0.9 }, detections: [{ class: 'hole', confidence: 0.83, bbox: [600, 330, 80, 80], offset: [0.02, 0], severity: 0.6 }] }],
+  });
+  assert.match(result.missionsClosed[0].result, /possible opening \(p=0\.83\)/);
+});
+
+test('real classifier output: a hole and its thinning on an area boundary become one target, not two', () => {
+  // Exact detections from the classifier on an Isaac image (1280 × 720), assuming a 4 m sweep photo of cell 30.
+  const store = new Store(':memory:');
+  const sweep = capture('real', 1, 30, SWEEP);
+  importObservations(store, {
+    penId: PEN, cageRadiusM: R, cageDepthM: 8, captures: [sweep],
+    reports: [{ image: sweep.image, model: 'net-classifier-cv:survey', quality: { visibility: 1, sharpness: 1 }, fouling_pct: 0, detections: [
+      { class: 'hole', confidence: 0.883, bbox: [256, 430, 139, 119], offset: [-0.4761, 0.376], severity: 0.812 },
+      { class: 'thinning', confidence: 0.82, bbox: [231, 396, 231, 198], offset: [-0.4402, 0.3586], severity: 0.372 },
+    ] }],
+  });
+  const plan = buildPlan(store, { penId: PEN, day: TODAY, robots: 3 });
+  const spot = plan.targets.filter((t) => t.cell === 29 || t.cell === 30);
+  assert.equal(spot.length, 1);
+  assert.equal(spot[0].cell, 29); // the hole outranks the thinning
+  assert.deepEqual(spot[0].reasons.map((r) => r.rule), ['area', 'P1', 'A1', 'M1']);
+  assert.equal(spot[0].robots.length, 2);
+  assert.equal(spot[0].safety.margin_m, 1);
 });

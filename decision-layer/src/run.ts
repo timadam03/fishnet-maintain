@@ -113,12 +113,13 @@ async function main(): Promise<void> {
       if (!dir || dir.startsWith('--')) throw new Error('usage: import <run_dir> [--pen N] [--vision <file>]');
       const lines = (path: string): unknown[] => readFileSync(path, 'utf8').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l));
       const truthPath = join(dir, 'ground_truth.json');
-      const grid = existsSync(truthPath) ? (JSON.parse(readFileSync(truthPath, 'utf8')).grid as { ui_sectors?: number; ui_wall_rows?: number; cage_radius_m?: number } | undefined) : undefined;
+      const grid = existsSync(truthPath) ? (JSON.parse(readFileSync(truthPath, 'utf8')).grid as { ui_sectors?: number; ui_wall_rows?: number; cage_radius_m?: number; cage_depth_m?: number } | undefined) : undefined;
       const result = importObservations(store, {
         penId: Number(flag('pen', String(ISAAC_PEN))),
         captures: lines(join(dir, 'captures.jsonl')),
         reports: lines(flag('vision', join(dir, 'vision.jsonl'))),
         cageRadiusM: grid?.cage_radius_m ?? 8,
+        cageDepthM: grid?.cage_depth_m ?? 8,
         grid,
       });
       console.log(`imported ${result.imported} observations; ${result.awaitingVision} captures have no vision report yet; ${result.unmatchedReports.length} reports had no capture`);

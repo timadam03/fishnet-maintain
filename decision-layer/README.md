@@ -57,6 +57,7 @@ npm run cli -- mission 1 done confirmed      # report a result, as a robot would
 npm run cli -- import <run_dir>              # Isaac captures + vision.jsonl → observations, closes missions
 npm run cli -- plan --out plan.json          # inspection plan for the robots (see docs/contracts.md)
 npm run stand-in-vision -- <run_dir>         # stand-in vision.jsonl from Isaac ground truth, until the real pipeline is wired
+python scripts/classifier_to_vision.py <run_dir> --classifier <classifier.py>   # real classifier → vision.jsonl
 npm run contracts                            # regenerate ../contracts/ (schemas and example run)
 npm run cli -- reset          # clear reviews, closures, proposals, chat, decision log, missions and observations
 ```
@@ -66,6 +67,9 @@ npm run cli -- reset          # clear reviews, closures, proposals, chat, decisi
 ```bash
 npm test          # node:test, offline (a fake model stands in for d1)
 npm run typecheck
+# the classifier adapter (Python), in a throwaway environment:
+uv run --no-project --with numpy==2.1.3 --with opencv-python-headless==4.10.0.84 --with jsonschema==4.23.0 \
+  python test/test_classifier_adapter.py "$(mktemp -d)"
 ```
 
 ## API (for `web/`)

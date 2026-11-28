@@ -41,6 +41,33 @@ One line per image, **including images with no detections**: "looked closely, no
 - **`class`** is one of: `hole`, `mesh_opening`, `fraying`, `thinning`, `distortion`, `rope_contact`, `biofouling`, `other`.
 - **`confidence`** is 0–1. The layer treats 0.3–0.7 as "unsure, look again" and ≥ 0.7 as "likely".
 - **`quality`** is optional but valuable. Low visibility or sharpness makes the layer send a robot closer instead of trusting the image.
+- **`offset`** is `[dx, dy]`: where the detection sits in the image, -1..1 from the centre, x right, y down. With it, the layer credits the detection to the area it is really in (a far photo spans about two areas) and aims the close-up at it.
+- **`severity`** is a number 0–1, or `low` / `medium` / `high`.
+
+### From the net classifier (`inspect_frame`)
+
+`decision-layer/scripts/classifier_to_vision.py` runs the classifier on a whole run and writes `vision.jsonl`:
+
+```bash
+python decision-layer/scripts/classifier_to_vision.py <run_dir> --classifier <path/to/classifier.py>
+```
+
+It needs numpy and opencv, like the classifier. Sweep photos run in `survey` mode, and plan photos (those with a `target_id`) in `investigation` mode.
+
+| Classifier output | In `vision.jsonl` |
+|---|---|
+| `type` `hole`, `thinning`, `biofouling` | Same class |
+| `type` `unknown` from the width check (`evidence: apparent_width`) | `thinning`; its confidence is ≤ 0.82, so usually "unsure" |
+| Any other `unknown` (opening-like, confidence ≤ 0.66) | `mesh_opening`, so "unsure, look closer" |
+| `confidence`, `severity`, `bbox` | Copied |
+| `dx`, `dy` | `offset` |
+| Diagnostics: mesh openings found, area with a resolved mesh | `quality.sharpness` (40+ openings = 1), `quality.visibility` (60%+ of the image = 1) |
+| Diagnostics: fouling mask | `fouling_pct` |
+| Image name, model | From `captures.jsonl`; model `net-classifier-cv:survey` or `:investigation` |
+
+**One trap it handles:** when the classifier can't find the mesh (murky or blurred), it returns no detections. That would read as "looked, nothing there" and clear the area. The adapter reports quality 0 for such images instead, so the layer sends a robot closer.
+
+The classifier's own `recommended_action` and tracker are not used: the decision layer decides across photos, robots and history.
 
 Schema: `contracts/vision-report.schema.json`.
 
@@ -50,7 +77,7 @@ Targets come best first. Each target says **where**, **how to look**, **how safe
 
 | Field | Meaning | What Isaac does with it |
 |---|---|---|
-| `cell`, `theta_deg`, `depth_frac` | The area (cell centre; depth as a fraction of the wall depth) | `theta = radians(theta_deg + d_theta_deg)`, `z = -(depth_frac + d_depth_frac) * CAGE_DEPTH` |
+| `cell`, `theta_deg`, `depth_frac` | The area, and where the camera should look: the detection's position when a photo placed it (rule A1), otherwise the cell centre. Depth is a fraction of the wall depth | Aim at `theta_deg`; robot at `theta_deg + d_theta_deg`, `z = -(depth_frac + d_depth_frac) * CAGE_DEPTH` (plan mode already does this) |
 | `scan.standoff_m` | Distance from the net for the photos | Waypoint radius `CAGE_R - standoff_m` |
 | `scan.viewpoints` | One or more offsets; several means several angles | One waypoint per viewpoint, camera aimed at the cell centre |
 | `scan.shots` | Photos per viewpoint | Repeat the capture |
@@ -73,6 +100,8 @@ The standoff is never smaller than `margin_m + 0.55` (rule S1), so every photo s
 | P5 | Wear sign ≥ 0.7 | Closer look, margin 0.9 m (weakened twine) |
 | P6 | Risk model says high or critical | Close inspection, margin 0.8 m |
 | G1 | Current ≥ 30 cm/s that day | +0.4 m margin on every target |
+| A1 | The target comes from a detection with an `offset` | Aim at the detection's position instead of the area centre |
+| M1 | Two targets aimed within about 0.4 m of each other (3°, 5% of depth), e.g. a hole and its thinning on an area boundary | One target: the higher-ranked one, with the larger margin |
 
 **When the photos come back, the mission closes with a result:**
 - confirmed opening: two views at ≥ 0.7
@@ -85,7 +114,7 @@ A confirmed opening leaves the plan, because it now needs a repair, not more rob
 
 **Close-ups replace far photos as evidence.** Once an area has a close-up (≤ 1.8 m, quality ≥ 0.5), only the close-ups count. A far sweep photo that was unsure therefore stops pulling the area back into every plan after a careful close look finds nothing.
 
-**Known limit: aiming.** A close-up aims at the centre of the area. A far photo can credit a defect to its centre area even when the defect sits near the photo's edge. If the close-up then misses it, the area is wrongly marked clear. The fix is to aim at the detection's position in the far photo (its `bbox`), which needs the image size and field of view. Check this on the first GPU run.
+**Aiming.** A far photo covers about two areas. With `offset`, a detection near the photo's edge is credited to the area it is really in, and the close-up aims at it (A1), using Isaac's camera: 60.4° × 36.3° field of view, looking horizontally. Without `offset`, the close-up aims at the area centre and can miss a defect near the edge. Check the aiming on the first GPU run.
 
 Schema: `contracts/inspection-plan.schema.json`.
 
