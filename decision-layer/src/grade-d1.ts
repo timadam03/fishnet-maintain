@@ -58,7 +58,7 @@ const rowOf = (cell: number) => Math.floor(cell / GRID.sectors);
 const colOf = (cell: number) => cell % GRID.sectors;
 const cellAt = (row: number, col: number) => row * GRID.sectors + (((col % GRID.sectors) + GRID.sectors) % GRID.sectors);
 
-function neighbours(cell: number): Array<{ cell: number; where: string }> {
+export function neighbours(cell: number): Array<{ cell: number; where: string }> {
   const r = rowOf(cell), c = colOf(cell);
   const out = [
     { cell: cellAt(r, c + 1), where: 'next sector anticlockwise' },
@@ -69,7 +69,7 @@ function neighbours(cell: number): Array<{ cell: number; where: string }> {
   return out;
 }
 
-function describePhoto(o: Observation, i: number): string {
+export function describePhoto(o: Observation, i: number): string {
   const dist = o.standoffM === null ? 'distance unknown' : `${o.standoffM.toFixed(1)} m from the net (${o.standoffM <= CLOSE_UP_M ? 'close-up' : 'far survey'})`;
   const q = o.quality ? `image quality ${qualityOf(o).toFixed(2)} (visibility ${o.quality.visibility.toFixed(2)}, sharpness ${o.quality.sharpness.toFixed(2)})` : 'image quality not reported';
   const purpose = o.targetId ? `taken for mission ${o.targetId}` : 'routine sweep';
@@ -80,7 +80,7 @@ function describePhoto(o: Observation, i: number): string {
   return `- Photo ${i + 1}: AUV ${o.auv ?? '?'}, ${purpose}, ${dist}, ${q}${foul}. On this cell: ${dets}.`;
 }
 
-function summarise(cell: number, obs: Observation[] | undefined): string {
+export function summarise(cell: number, obs: Observation[] | undefined): string {
   if (!obs?.length) return 'not photographed';
   const a = assessCell(cell, obs);
   const found = [

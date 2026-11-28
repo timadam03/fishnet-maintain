@@ -11,13 +11,20 @@
  *   npm run cli -- reset           clear reviews, closures, proposals, chat, log and missions
  *   npm run cli -- import <run_dir> [--grader d1]   Isaac captures + vision reports → observations
  *   npm run cli -- plan [--grader rules|d1] [--out plan.json]   what the robots should do next
+ *   npm run cli -- escalate <run_dir> [--grader rules|d1]   d1 #2 on the close-ups: critical? engineer? (reports in run_dir/reports)
+ *   npm run cli -- review [all]                    the engineer's queue, and how often engineers agreed
+ *   npm run cli -- review <case> approve|reject|edit <file> [--by name] [--note text]
+ *   npm run cli -- report <case>                   print a case's report
+ *   npm run cli -- export-cases <file.jsonl> [--all]   reviewed cases as training data (appends new ones)
+ *   npm run cli -- import-cases <file.jsonl>       cases from other farms: calibration and report examples
  */
 import { modelStatus, openStore } from './app.ts';
 import { runCurator } from './curator.ts';
 import { defaultDecisionModel } from './d1.ts';
 import { findingById, oxygenEventText, penDecisions, siteAlerts } from './engine.ts';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { FARM_ID, agreement, caseByNo, caseRecord, cases, d1EscalationAsk, escalateMissions, forgetCases, importCases, reviewCase } from './escalate.ts';
 import { gradeWithD1, d1Ask, regradeMissions } from './grade-d1.ts';
 import { buildPlan, importObservations } from './inspection.ts';
 import { ask } from './investigator.ts';
@@ -155,6 +162,76 @@ async function main(): Promise<void> {
       console.log(`${plan.targets.length} targets, then ${plan.coverage.length} cells of coverage${out ? `; written to ${out}` : ''}`);
       return;
     }
+    case 'escalate': {
+      // escalate <run_dir> [--pen N] [--grader rules|d1] [--again] [--no-agent]: d1 #2 on each closed mission's close-ups
+      const dir = args[0];
+      if (!dir || dir.startsWith('--')) throw new Error('usage: escalate <run_dir> [--pen N] [--grader rules|d1] [--again] [--no-agent]');
+      const penId = Number(flag('pen', String(ISAAC_PEN)));
+      const grader = flag('grader', 'rules');
+      if (grader !== 'rules' && grader !== 'd1') throw new Error(`--grader must be rules or d1, got ${grader}`);
+      const d1 = grader === 'd1' ? await d1EscalationAsk(store) : null;
+      if (grader === 'd1' && !d1) console.log('d1 #2: no AI_GATEWAY_API_KEY, so the rules decide every case');
+      const results = await escalateMissions(store, { penId, day: TODAY, ask: d1?.ask ?? null, model: d1?.model ?? null, runDir: dir, again: args.includes('--again'), agent: !args.includes('--no-agent') });
+      if (results.length === 0) console.log('no new closed missions to decide');
+      for (const r of results) {
+        console.log(`case ${r.caseNo} (mission #${r.missionId}, cell ${r.cell}): ${r.decision.toUpperCase().replace('_', ' ')} by ${r.decidedBy}: ${r.reason}`);
+        if (r.reportPath) console.log(`   report (${r.reportBy}): ${r.reportPath}`);
+      }
+      const n = (d: string) => results.filter((r) => r.decision === d).length;
+      if (results.length) console.log(`${results.length} cases: ${n('critical')} critical, ${n('human_review')} for an engineer, ${n('reinspect')} to re-inspect, ${n('monitor')} to monitor, ${n('auto_close')} closed`);
+      return;
+    }
+    case 'review': {
+      const caseArg = args[0];
+      if (caseArg === undefined || caseArg === 'all') {
+        const list = caseArg === 'all' ? cases(store) : cases(store, { reviewStatus: 'pending' });
+        if (list.length === 0) console.log(caseArg === 'all' ? 'no cases yet' : 'nothing waiting for an engineer');
+        for (const c of list) console.log(`case ${c.caseNo} [${c.reviewStatus}${c.verdict ? `: ${c.verdict}` : ''}] ${c.decision.toUpperCase().replace('_', ' ')} ${c.farmId} pen ${c.penId} cell ${c.cell} (${c.cellLabel})${c.source === 'imported' ? ' (imported)' : ` mission #${c.missionId}`}: ${c.reason}${c.reportPath ? `\n   report: ${c.reportPath}` : ''}`);
+        const a = agreement(store);
+        if (a.reviewed) console.log(`engineers reviewed ${a.reviewed} cases: escalations ${a.escalatedReal} real / ${a.escalatedFalse} false alarm, ${a.missed} missed by the escalation, ${a.reportsEdited} reports edited`);
+        return;
+      }
+      // review <case> approve|reject|edit <file> (aliases: real, false-alarm). On a case that was
+      // closed without an engineer, approve/edit means "there is a defect after all": a missed case.
+      const action = args[1];
+      const by = flag('by', process.env.REVIEWER ?? '') || undefined;
+      const note = flag('note', '') || undefined;
+      let c;
+      if (action === 'approve' || action === 'real') c = reviewCase(store, Number(caseArg), { verdict: 'real', reviewer: by, note });
+      else if (action === 'reject' || action === 'false-alarm') c = reviewCase(store, Number(caseArg), { verdict: 'false_alarm', reviewer: by, note });
+      else if (action === 'edit' && args[2] && !args[2].startsWith('--')) c = reviewCase(store, Number(caseArg), { verdict: 'real', reviewer: by, note, finalReportMd: readFileSync(args[2], 'utf8') });
+      else throw new Error('usage: review <case> approve|reject|edit <file> [--by name] [--note text]');
+      console.log(`case ${c.caseNo}: ${c.reviewStatus} (${c.verdict === 'real' ? 'real defect' : 'false alarm'})${c.reviewer ? ` by ${c.reviewer}` : ''}`);
+      return;
+    }
+    case 'report': {
+      const c = caseByNo(store, Number(args[0]));
+      console.log(c.finalReportMd ?? c.reportMd ?? `case ${c.caseNo} has no report (${c.decision}: ${c.reason})`);
+      return;
+    }
+    case 'export-cases': {
+      // Appends cases not yet in the file, so one file can collect cases from many runs and farms.
+      const file = args[0];
+      if (!file || file.startsWith('--')) throw new Error('usage: export-cases <file.jsonl> [--all]');
+      const have = new Set(existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter((l) => l.trim()).map((l) => (JSON.parse(l) as { case_id: string }).case_id) : []);
+      const fresh = cases(store, { source: 'local' }).filter((c) => (args.includes('--all') || c.verdict !== null) && !have.has(c.caseId));
+      for (const c of fresh) appendFileSync(file, `${JSON.stringify(caseRecord(c))}\n`);
+      console.log(`${fresh.length} new case${fresh.length === 1 ? '' : 's'} from ${FARM_ID} added to ${file} (${have.size + fresh.length} in the file)${args.includes('--all') ? '' : '; only reviewed cases, --all for every case'}`);
+      return;
+    }
+    case 'import-cases': {
+      const file = args[0];
+      if (!file) throw new Error('usage: import-cases <file.jsonl>');
+      const records = readFileSync(file, 'utf8').split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l) as Record<string, unknown>);
+      const own = records.filter((r) => r.farm_id === FARM_ID).length;
+      const added = importCases(store, records.filter((r) => r.farm_id !== FARM_ID));
+      console.log(`imported ${added} new cases from other farms (${own} of this farm's own skipped)`);
+      return;
+    }
+    case 'forget-cases':
+      forgetCases(store);
+      console.log('cleared the case library (escalations, reviews, reports)');
+      return;
     case 'missions':
       for (const m of missions(store, { status: args[0] as never })) console.log(`#${m.id} ${m.status} ${m.kind} Pen ${m.penId} ${m.priority} ${m.areas.slice(0, 3).join('; ')}${m.areas.length > 3 ? ` (+${m.areas.length - 3})` : ''}: ${m.reason}${m.result ? ` → ${m.result}` : ''}`);
       return;
@@ -165,10 +242,10 @@ async function main(): Promise<void> {
     }
     case 'reset':
       store.reset();
-      console.log('cleared reviews, alert closures, proposals, chat, decision log and missions');
+      console.log('cleared reviews, alert closures, proposals, chat, decision log and missions (the case library stays: forget-cases clears it)');
       return;
     default:
-      console.log('commands: demo | ask "<question>" | curator | accept <id> | record [day] | trace <entity> | missions [status] | mission <id> <assigned|done|cancelled> [result] | import <run_dir> [--pen N] [--vision file] [--grader d1] | plan [--pen N] [--robots N] [--grader rules|d1] [--out file] | reset');
+      console.log('commands: demo | ask "<question>" | curator | accept <id> | record [day] | trace <entity> | missions [status] | mission <id> <assigned|done|cancelled> [result] | import <run_dir> [--pen N] [--vision file] [--grader d1] | plan [--pen N] [--robots N] [--grader rules|d1] [--out file] | escalate <run_dir> [--grader rules|d1] | review [all] | review <case> approve|reject|edit <file> | report <case> | export-cases <file> [--all] | import-cases <file> | forget-cases | reset');
       process.exitCode = 1;
   }
 }

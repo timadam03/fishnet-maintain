@@ -8,8 +8,9 @@ positions cross the seam: a target is a cell (row * sectors + col) with its cent
 depth fraction, and this module converts that to metres for this pen.
 
 How a target is flown:
-- one waypoint per viewpoint, `standoff_m` from the net, aimed at the cell centre, so offset
-  viewpoints look at the same spot from another angle;
+- one waypoint per viewpoint, `standoff_m` from the net, aimed at the target's `aim` point (where
+  the survey saw the defect; the cell centre if there is none), so offset viewpoints look at the
+  same spot from another angle. align.py then corrects the aim from the live picture;
 - when a target lists several robots, the viewpoints are shared out between them and the robots
   take turns on the target (fishfarm_demo.py holds a lock per target), because two robots next to
   each other at the target would block each other under the HOCBF;
@@ -24,6 +25,7 @@ import math
 import numpy as np
 
 Z_EDGE = 0.5        # [m] keep waypoints this far below the surface and above the sinker ring
+CAM_UP = 0.02       # [m] camera above the vehicle's centre
 
 
 def load_plan(path, sectors, wall_rows):
@@ -61,6 +63,42 @@ def waypoint(theta_aim, theta_at, depth_frac, standoff, cage_r, cage_depth, **ex
     return wp
 
 
+def aimed_waypoint(theta, z, d_theta, standoff, cage_r, cage_depth, **extra):
+    """A photo spot that puts the net point (theta, z) in the middle of the picture. `d_theta` [rad]
+    moves the vehicle round the pen for another angle on the same point."""
+    return waypoint(theta, theta + d_theta, (CAM_UP - z) / cage_depth, standoff, cage_r, cage_depth, **extra)
+
+
+def view_blocked(wp, obstacles, cage_r, slack=0.2):
+    """A rope is too close to the photo spot, or hangs between the camera and the point aimed at."""
+    x0, y0 = wp["pos"][0], wp["pos"][1]
+    dx, dy = cage_r * math.cos(wp["theta"]) - x0, cage_r * math.sin(wp["theta"]) - y0
+    for x, y, r in obstacles:
+        if math.hypot(x0 - x, y0 - y) <= r + wp["margin"] + slack:
+            return True
+        s = min(1.0, max(0.0, ((x - x0) * dx + (y - y0) * dy) / (dx * dx + dy * dy)))
+        if math.hypot(x0 + s * dx - x, y0 + s * dy - y) <= r:
+            return True
+    return False
+
+
+# Other places to photograph the same point from, nearest to the planned one first.
+VIEW_D_THETA = [math.radians(d) for d in (0, 5, -5, 10, -10, 15, -15)]
+VIEW_D_STANDOFF = (0.0, 0.3)
+
+
+def clear_view(wp, standoff, obstacles, cage_r, cage_depth):
+    """The aimed waypoint `wp`, moved round or back until no rope is in the way. None if none works."""
+    for back in VIEW_D_STANDOFF:
+        for turn in VIEW_D_THETA:
+            new = aimed_waypoint(wp["theta"], wp["aim_z"], wp["aim_d_theta"] + turn, standoff + back,
+                                 cage_r, cage_depth)
+            moved = dict(wp, **{k: new[k] for k in ("pos", "yaw", "z", "look_dist", "standoff")})
+            if not view_blocked(moved, obstacles, cage_r):
+                return moved
+    return None
+
+
 def target_waypoints(plan, n_auv, cage_r, cage_depth):
     """Per robot, the waypoints for the plan's targets, best target first."""
     out = [[] for _ in range(n_auv)]
@@ -78,11 +116,19 @@ def target_waypoints(plan, n_auv, cage_r, cage_depth):
                 else [j % len(views)]
             for i in mine:
                 v = views[i]
-                out[k].append(waypoint(
-                    math.radians(t["theta_deg"]), math.radians(t["theta_deg"] + v["d_theta_deg"]),
-                    t["depth_frac"] + v["d_depth_frac"], t["scan"]["standoff_m"], cage_r, cage_depth,
-                    target_id=t["target_id"], cell=t["cell"], viewpoint=i,
-                    margin=t["safety"]["margin_m"], shots=t["scan"]["shots"]))
+                common = dict(target_id=t["target_id"], cell=t["cell"], viewpoint=i,
+                              margin=t["safety"]["margin_m"], shots=t["scan"]["shots"])
+                aim = t.get("aim")
+                if aim:     # where the survey saw the defect. A depth offset would move it off centre.
+                    theta, d_theta = math.radians(aim["theta_deg"]), math.radians(v["d_theta_deg"])
+                    z = -aim["depth_frac"] * cage_depth
+                    out[k].append(aimed_waypoint(theta, z, d_theta, t["scan"]["standoff_m"], cage_r, cage_depth,
+                                                 aim_kind=aim["kind"], aim_z=z, aim_d_theta=d_theta,
+                                                 planned_standoff=t["scan"]["standoff_m"], **common))
+                else:
+                    out[k].append(waypoint(
+                        math.radians(t["theta_deg"]), math.radians(t["theta_deg"] + v["d_theta_deg"]),
+                        t["depth_frac"] + v["d_depth_frac"], t["scan"]["standoff_m"], cage_r, cage_depth, **common))
     return out
 
 

@@ -6,6 +6,8 @@ run_loop.ps1 -- the closed loop on the Windows GPU machine, in one command.
   3. decide   decision layer: grade every cell, write the plan     -> run_sweep\plan_<grader>.json
   4. act      Isaac Sim: fly the plan (closer, other angles)       -> <Out>\run_plan_<grader>
   5. learn    detect the new photos and import them: missions close with results
+              escalate: d1 #2 (or the rules) on each mission's close-ups: critical? engineer?
+              critical cases get a drafted report with the photos -> run_plan_<grader>\reports
   6. score    the plan and the mission results against the sim's ground truth
 
   powershell -ExecutionPolicy Bypass -File abyss-sim\scripts\run_loop.ps1 -Isaac C:\isaacsim51 -Out C:\abyss_out\loop2
@@ -35,7 +37,10 @@ param(
   [switch]$SkipSweep,                 # reuse <Out>\run_sweep and start from the detect step
   [switch]$Runthrough,                # render the demo video of the whole loop at the end
   [ValidateSet("rules", "d1")]
-  [string]$Grader = "rules"           # who grades the cells: the plan rules, or the d1 model
+  [string]$Grader = "rules",          # who grades the cells: the plan rules, or the d1 model
+  [switch]$Gui,                       # show the Isaac Sim window while it runs (watch it live)
+  [ValidateSet("orbit", "section", "auv0", "auv1", "auv2")]
+  [string]$View = "orbit"             # with -Gui: which camera the window shows
 )
 
 # Every step is checked explicitly below. Not "Stop": in Windows PowerShell 5.1 that turns any
@@ -90,7 +95,10 @@ New-Item -ItemType Directory -Force -Path $Out | Out-Null
 Write-Host "Isaac Sim: $Isaac | detector Python: $Py | Node $nodeMajor | grader: $Grader | output: $Out"
 
 # Same scene for the sweep and the plan run: these flags place the ropes and the net defects.
-$Scene = @("--headless", "--safe-nav", "--obstacles", "$Obstacles", "--defect-seed", "$Seed", "--full-coverage")
+$Scene = @("--safe-nav", "--obstacles", "$Obstacles", "--defect-seed", "$Seed", "--full-coverage")
+# -Gui: the window stays up while the robots work and closes by itself after each run, so the loop
+# carries on. Don't close it early: the run would end without its photos.
+if ($Gui) { $Scene += @("--close-when-done", "--view", $View) } else { $Scene += "--headless" }
 if ($Lite) { $Scene += "--lite" }
 
 function Run-Sim([string]$name, [string]$outDir, [string[]]$extra = @()) {
@@ -155,6 +163,9 @@ Step "5/6 learn: detect the close-ups and close the missions"
 Run-Vision $PlanRun
 Decision @("import", $PlanRun, "--grader", $Grader)
 Decision @("missions")
+# Second decision: on the close-ups, is it critical, and does an engineer need to look?
+Decision @("escalate", $PlanRun, "--grader", $Grader)
+Decision @("review")
 Decision @("plan", "--grader", $Grader, "--out", (Join-Path $PlanRun "next_plan.json"))
 # The next loop's reset clears the missions: keep this loop's results next to its photos.
 Copy-Item $Db (Join-Path $PlanRun "shoal.db") -Force
@@ -182,6 +193,7 @@ foreach ($run in @($Sweep, $PlanRun)) {
 }
 Write-Host "Plan:      $PlanFile"
 Write-Host "Overlays:  $(Join-Path $Sweep 'overlays')  and  $(Join-Path $PlanRun 'overlays')"
+Write-Host "Reports:   $(Join-Path $PlanRun 'reports')  (review: npm run cli -- review <case> approve|reject|edit <file>)"
 if ($Record) {
   Write-Host "Video:     $(Join-Path $Out "abyss_loop_$Grader.mp4")  (the whole loop)"
   Write-Host "           and the separate runs in $Out\rec_sweep, $Out\rec_plan_$Grader"

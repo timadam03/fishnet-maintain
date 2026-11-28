@@ -115,6 +115,33 @@
               ]
             }
           },
+          "aim": {
+            "description": "Where the defect was seen. The robot aims here and lines up on it from the live picture; without it, the cell centre",
+            "type": "object",
+            "properties": {
+              "theta_deg": {
+                "type": "number"
+              },
+              "depth_frac": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "opening",
+                  "wear",
+                  "fouling"
+                ]
+              }
+            },
+            "required": [
+              "theta_deg",
+              "depth_frac",
+              "kind"
+            ]
+          },
           "scan": {
             "type": "object",
             "properties": {

@@ -236,7 +236,10 @@ def main():
                 counts[d["class"]] = counts.get(d["class"], 0) + 1
             check_cells(c, line, grid, cell_check)
             for d in line["detections"]:
-                d.pop("_at", None)
+                theta, z = d.pop("_at")
+                # Where on the net, for aiming the close-up. Pen-independent, like the cells.
+                d["at"] = {"theta_deg": round(math.degrees(theta) % 360, 2),
+                           "depth_frac": round(min(1.0, max(0.0, -z / grid["cage_depth_m"])), 4)}
             out.write(json.dumps(line) + "\n")
 
     print(f"[vision] {written} photos -> {os.path.join(run, 'vision.jsonl')}")

@@ -11,6 +11,9 @@ import numpy as np
 class Config:
     mode: str = "survey"
     survey_width: int = 960
+    # Close-ups are scaled down further: at full size the near strands are wider than the
+    # segmentation's 9 px window, which hollows them out and the whole mesh is misread.
+    investigation_width: int = 640
     hole_ratio: float = 1.65
     thinning_ratio: float = 0.73
 
@@ -49,7 +52,79 @@ def _record(kind, box, center, polygon, confidence, severity, **metrics):
                 **metrics)
 
 
-def _openings(material, water, config):
+def _ropes(frame, material, water):
+    """Ropes and hoses: long solid bands that are neither twine, growth nor water."""
+    hue = cv.cvtColor(frame, cv.COLOR_BGR2HSV)[:, :, 0]
+    other = _mask((material == 0) & (water == 0) & (hue >= 12) & (hue <= 75))
+    other = cv.morphologyEx(other, cv.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    _, labels, stats, _ = _components(other)
+    long_side = np.maximum(stats[:, 2], stats[:, 3])
+    keep = long_side >= min(material.shape) * .45
+    keep[0] = False
+    return _mask(keep[labels])
+
+
+def _faint(frame):
+    """Pixels with even a trace of an edge. Twine washed out by a lamp still has one; open water has none."""
+    gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+    return cv.subtract(cv.dilate(gray, np.ones((9, 9), np.uint8)), gray) >= 5
+
+
+def _across_ropes(clean_water, ropes, faint, refs, typical, pitch):
+    """Openings with a rope hanging across them.
+
+    Each side of the rope alone is cut off by it and often fails the single-opening checks, or shows
+    as two defects. Where open water faces open water across a rope, the two sides and the rope
+    between them are one opening. A rope over healthy mesh joins nothing: that needs a gap wider
+    than a mesh on both sides.
+    """
+    # Only where the mesh is well resolved (close-ups): from far off, washed-out net and the water
+    # above the net look the same as a gap.
+    if pitch < 18 or not cv.countNonZero(ropes):
+        return []
+    margin = round(pitch * .7)
+    disk = cv.getStructuringElement(cv.MORPH_ELLIPSE, (2 * margin + 1,) * 2)
+    core = _mask(cv.distanceTransform(clean_water, cv.DIST_L2, 5) > pitch * .81)
+    count, cores, stats, _ = _components(core)
+    gaps = cv.dilate(core, disk) & clean_water           # the cores grown back to their own gap
+    # The rope's width, from its thickest point, says how far apart the two sides can be.
+    width = 2 * int(np.ceil(np.percentile(cv.distanceTransform(ropes, cv.DIST_L2, 5)[ropes > 0], 98)))
+    reach = width + 2 * margin + 3
+    bridge = ropes & cv.dilate(gaps, cv.getStructuringElement(cv.MORPH_ELLIPSE, (reach | 1,) * 2))
+    # Blended pixels along the rope's edges are neither rope nor water: close that seam.
+    union = cv.morphologyEx(gaps | bridge, cv.MORPH_CLOSE, np.ones((7, 7), np.uint8))
+    _, joined, joined_stats, _ = _components(union)
+    found = []
+    for idx, (bx, by, bw, bh, _) in enumerate(joined_stats[1:], 1):
+        region = joined == idx
+        pieces = [c for c in np.unique(cores[region]) if c and stats[c, 4] >= typical * .24]
+        if len(pieces) < 2 or not (ropes[region] != 0).any():
+            continue
+        # Only the rope between the pieces belongs to the opening, not its whole length.
+        water_part = _mask(region & np.isin(cores, pieces))
+        water_part = cv.dilate(water_part, disk) & clean_water
+        points = cv.findNonZero(water_part)
+        hull = np.zeros_like(water_part)
+        cv.fillConvexPoly(hull, cv.convexHull(points), 255)
+        opening = cv.morphologyEx((water_part | (hull & ropes)) & hull, cv.MORPH_CLOSE, np.ones((7, 7), np.uint8))
+        moments = cv.moments(opening, binaryImage=True)
+        if not moments["m00"] or np.mean((clean_water | ropes)[hull > 0] != 0) < .8:
+            continue                                      # mesh in between: two separate gaps
+        # Washed-out twine inside is not a gap. (Eroded, so the real edges around it don't count.)
+        inside = (cv.erode(opening, np.ones((9, 9), np.uint8)) > 0) & (clean_water > 0)
+        if inside.any() and faint[inside].mean() > .02:
+            continue
+        cx, cy = moments["m10"] / moments["m00"], moments["m01"] / moments["m00"]
+        delta = refs - (cx, cy)
+        radius = np.sqrt(moments["m00"] / np.pi)
+        near = delta[np.sum(delta ** 2, axis=1) < (radius + pitch * 6) ** 2]
+        if len(near) < 15 or np.unique((near[:, 0] > 0) + 2 * (near[:, 1] > 0)).size < 2:
+            continue
+        found.append((opening, (cx, cy), moments["m00"]))
+    return found
+
+
+def _openings(material, water, config, ropes, faint):
     height, width = material.shape
     # Bridge rasterization gaps only in the topology used for opening extraction.
     topology = cv.morphologyEx(material, cv.MORPH_CLOSE,
@@ -157,6 +232,13 @@ def _openings(material, water, config):
         detections.append(_record(kind, box, (cx, cy), polygon,
                                   .76 if kind == "hole" else .56, .62,
                                   opening_area_px=int(size), evidence="water_core"))
+    for opening, (cx, cy), size in _across_ropes(clean_water & cv.bitwise_not(ropes), ropes, faint, refs, typical, pitch):
+        # The whole opening replaces whatever was found of its parts.
+        detections = [d for d in detections
+                      if not opening[min(height - 1, int(d["centroid"][1])), min(width - 1, int(d["centroid"][0]))]]
+        polygon = _polygon(opening, 0, 0)
+        detections.append(_record("hole", cv.boundingRect(np.asarray(polygon, np.int32)), (cx, cy), polygon,
+                                  .80, .75, opening_area_px=int(size), evidence="across_rope"))
     return detections, labels, healthy, valid, pitch
 
 
@@ -391,7 +473,7 @@ def inspect_frame(frame, *, config=None, tracker=None, render=True, diagnostics=
     """Return (detections, annotated BGR image or None) from a uint8 BGR frame.
 
     Pass dicts as diagnostics or timings to receive intermediate images or stage seconds.
-    Survey may downscale internally. Returned coordinates always refer to the input.
+    Large frames are downscaled internally. Returned coordinates always refer to the input.
     """
     if not isinstance(frame, np.ndarray) or frame.dtype != np.uint8 or frame.ndim != 3 or frame.shape[2] != 3:
         raise ValueError("expected a uint8 H×W×3 BGR NumPy array")
@@ -399,7 +481,7 @@ def inspect_frame(frame, *, config=None, tracker=None, render=True, diagnostics=
     if min(height, width) < 16:
         raise ValueError("frame dimensions must both be at least 16 pixels")
     config = config or Config()
-    if config.mode not in ("survey", "investigation") or config.survey_width < 16:
+    if config.mode not in ("survey", "investigation") or min(config.survey_width, config.investigation_width) < 16:
         raise ValueError("invalid perception mode or survey width")
 
     start = stage = perf_counter()
@@ -411,13 +493,14 @@ def inspect_frame(frame, *, config=None, tracker=None, render=True, diagnostics=
         stage = now
 
     working = frame
-    if config.mode == "survey" and width > config.survey_width:
-        target_width = config.survey_width
+    target_width = config.survey_width if config.mode == "survey" else config.investigation_width
+    if width > target_width:
         working = cv.resize(frame, (target_width, max(16, round(height*target_width/width))),
                             interpolation=cv.INTER_AREA)
     strands, fouling, material, water = _segment(working)
     finish("segmentation")
-    detections, labels, healthy, valid, pitch = _openings(material, water, config)
+    detections, labels, healthy, valid, pitch = _openings(
+        material, water, config, _ropes(working, material, water), _faint(working))
     finish("hole")
     widths = _widths(strands) if pitch or diagnostics is not None else None
     detections.extend(_thinning(widths, valid, fouling, pitch, config, water))

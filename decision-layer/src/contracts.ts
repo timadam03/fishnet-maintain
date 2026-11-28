@@ -61,6 +61,10 @@ export const VisionReport = z.object({
       cell: cell.optional().describe('Cell the detection itself is on (from its pixel position); default: the capture cell'),
       severity: z.enum(['low', 'medium', 'high']).optional(),
       size_m: z.number().min(0).optional().describe('Estimated size of the defect'),
+      at: z
+        .object({ theta_deg: z.number(), depth_frac: unit })
+        .optional()
+        .describe('Where on the net wall the detection is (from its pixel position); the close-up aims here'),
       crop: z.string().optional(),
     }),
   ),
@@ -95,6 +99,10 @@ export const InspectionPlan = z.object({
       priority: unit,
       priority_label: z.enum(['high', 'normal', 'low']),
       reasons: z.array(reason).min(1),
+      aim: z
+        .object({ theta_deg: z.number(), depth_frac: unit, kind: z.enum(['opening', 'wear', 'fouling']) })
+        .optional()
+        .describe('Where the defect was seen. The robot aims here and lines up on it from the live picture; without it, the cell centre'),
       scan: z.object({
         standoff_m: z.number().positive().describe('Distance from the net for the photos'),
         shots: z.number().int().min(1).describe('Photos per viewpoint'),

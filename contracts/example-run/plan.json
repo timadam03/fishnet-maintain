@@ -1,9 +1,9 @@
 {
-  "plan_id": "pen7-d89-761e84f2",
+  "plan_id": "pen7-d89-03939741",
   "created_at": "2026-11-27T23:00:00.000Z",
   "pen_id": 7,
   "day": 89,
-  "rules_version": "plan-v1",
+  "rules_version": "plan-v2",
   "grid": {
     "sectors": 24,
     "wall_rows": 8
@@ -31,7 +31,7 @@
         }
       ],
       "scan": {
-        "standoff_m": 1.55,
+        "standoff_m": 2.2,
         "shots": 2,
         "viewpoints": [
           {
@@ -73,7 +73,7 @@
         }
       ],
       "scan": {
-        "standoff_m": 1.15,
+        "standoff_m": 2.2,
         "shots": 3,
         "viewpoints": [
           {
@@ -110,7 +110,7 @@
         }
       ],
       "scan": {
-        "standoff_m": 1.15,
+        "standoff_m": 2.2,
         "shots": 3,
         "viewpoints": [
           {
@@ -147,7 +147,7 @@
         }
       ],
       "scan": {
-        "standoff_m": 1.35,
+        "standoff_m": 2.2,
         "shots": 2,
         "viewpoints": [
           {
@@ -184,7 +184,7 @@
         }
       ],
       "scan": {
-        "standoff_m": 1.2,
+        "standoff_m": 2.2,
         "shots": 1,
         "viewpoints": [
           {

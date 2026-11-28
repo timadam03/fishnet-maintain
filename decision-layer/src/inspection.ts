@@ -16,13 +16,26 @@ import { ensureMission, updateMission } from './log.ts';
 import type { Store } from './store.ts';
 import { CELLS, cellLabel, explainRisk, penSim, world } from './world.ts';
 
-export const PLAN_RULES_VERSION = 'plan-v1';
+export const PLAN_RULES_VERSION = 'plan-v2';
 
 const OPENING = new Set(['hole', 'mesh_opening']);
 const WEAR = new Set(['fraying', 'thinning', 'distortion', 'rope_contact']);
 /** Vehicle radius (safe_nav.py) plus slack: a photo spot closer to the net than margin + this can't be reached. */
 const REACH_SLACK_M = 0.55;
 const STRONG_CURRENT_CM_S = 30;
+/**
+ * Close-up distance from the net. Measured in the sim: under 2 m the robot's own lamps wash the near
+ * twine out to the colour of the water and the detector reads nothing; from 2.1 m it reads the holes.
+ */
+export const CLOSE_INSPECTION_M = 2.2;
+/** Detections closer together than this are one defect and get one target. [deg round the pen, depth fraction] */
+const SAME_SPOT = { thetaDeg: 6, depthFrac: 0.09 };
+
+export interface Alignment {
+  status: 'aligned' | 'not_seen' | 'off_centre';
+  kind?: NonNullable<PlanTarget['aim']>['kind'];
+  at?: { theta_deg: number; depth_frac: number };
+}
 
 export interface Observation {
   runId: string;
@@ -39,6 +52,8 @@ export interface Observation {
   /** Cells the photo shows (vision report cells_in_view); null for reports that don't say. */
   cellsInView: number[] | null;
   detections: VisionReport['detections'];
+  /** For a close-up: how well it was lined up, and on which spot; null for photos that weren't aimed. */
+  align?: Alignment | null;
 }
 
 /**
@@ -76,8 +91,8 @@ export function importObservations(
   const reports = input.reports.map((r) => VisionReport.parse(r));
   const unmatchedReports: string[] = [];
   const insert = store.db.prepare(
-    `INSERT INTO observations (run_id, image, pen_id, cell, auv, sim_time, standoff_m, target_id, model, quality_json, fouling, detections_json, imported_at, cells_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(run_id, image) DO NOTHING`,
+    `INSERT INTO observations (run_id, image, pen_id, cell, auv, sim_time, standoff_m, target_id, model, quality_json, fouling, detections_json, imported_at, cells_json, align_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(run_id, image) DO NOTHING`,
   );
   let imported = 0;
   const touchedTargets = new Set<string>();
@@ -92,6 +107,7 @@ export function importObservations(
       c?.run_id ?? 'external', r.image, r.where?.pen_id ?? input.penId, c?.cell ?? r.where!.cell, c?.auv ?? r.where?.auv ?? null,
       c?.sim_time ?? null, standoff, c?.target_id ?? null, r.model, r.quality ? JSON.stringify(r.quality) : null,
       r.fouling_pct ?? null, JSON.stringify(r.detections), new Date().toISOString(), r.cells_in_view ? JSON.stringify(r.cells_in_view) : null,
+      c?.alignment ? JSON.stringify(c.alignment) : null,
     );
     imported += Number(res.changes);
     if (c?.target_id) touchedTargets.add(c.target_id);
@@ -113,6 +129,7 @@ export function observations(store: Store, filter: { penId: number; cell?: numbe
     quality: r.quality_json ? JSON.parse(String(r.quality_json)) : null, fouling: r.fouling === null ? null : Number(r.fouling),
     cellsInView: r.cells_json ? JSON.parse(String(r.cells_json)) : null,
     detections: JSON.parse(String(r.detections_json)),
+    align: r.align_json ? (JSON.parse(String(r.align_json)) as Alignment) : null,
   }));
 }
 
@@ -156,7 +173,7 @@ const qualityOf = (o: Observation): number => (o.quality ? Math.min(o.quality.vi
 const maxConf = (o: Observation, classes: Set<string>): number => Math.max(0, ...o.detections.filter((d) => classes.has(d.class)).map((d) => d.confidence));
 
 /** A photo at or closer than this, with usable quality, counts as a close-up. Demo value. */
-export const CLOSE_UP_M = 1.8;
+export const CLOSE_UP_M = 2.8;
 
 /**
  * What a set of images says about one cell. Openings need two good views to count as confirmed.
@@ -164,7 +181,10 @@ export const CLOSE_UP_M = 1.8;
  * cell in every plan even after a careful close look found nothing.
  */
 export function assessCell(cell: number, all: Observation[]): CellAssessment {
-  const close = all.filter((o) => o.standoffM !== null && o.standoffM <= CLOSE_UP_M && qualityOf(o) >= 0.5);
+  // A close-up that never got the defect into the middle of the frame can add a finding, but finding
+  // nothing in it says nothing, so it must not replace the earlier photos as evidence.
+  const missed = (o: Observation) => (o.align?.status === 'off_centre' || o.align?.status === 'not_seen') && o.detections.length === 0;
+  const close = all.filter((o) => o.standoffM !== null && o.standoffM <= CLOSE_UP_M && qualityOf(o) >= 0.5 && !missed(o));
   const obs = close.length > 0 ? close : all;
   const opening = Math.max(0, ...obs.map((o) => maxConf(o, OPENING)));
   // A view is a robot on a pass: several shots from the same robot in the same run count once.
@@ -183,6 +203,59 @@ export function assessCell(cell: number, all: Observation[]): CellAssessment {
   return { cell, status, images: obs.length, opening, openingViews, wear, fouling, quality };
 }
 
+function cellResult(a: CellAssessment): string {
+  return a.status === 'confirmed_opening' ? `confirmed: opening seen from ${a.openingViews} viewpoints (best p=${a.opening.toFixed(2)})`
+    : a.status === 'possible_opening' ? `possible opening (p=${a.opening.toFixed(2)}), one view only`
+    : a.status === 'wear' ? `confirmed: wear sign (p=${a.wear.toFixed(2)})`
+    : a.status === 'clear' ? `clear: ${a.images} good image${a.images > 1 ? 's' : ''}, nothing found`
+    : `${a.status}: needs another look`;
+}
+
+/** A detection on the spot the robot lined up on. Without positions, every detection counts. */
+function onSpot(d: VisionReport['detections'][number], at: Alignment['at']): boolean {
+  return !d.at || !at || (angleDist(d.at.theta_deg, at.theta_deg) <= SAME_SPOT.thetaDeg && Math.abs(d.at.depth_frac - at.depth_frac) <= SAME_SPOT.depthFrac);
+}
+
+/**
+ * What a mission's own photos say about what it was sent to look at. Closing a mission and
+ * escalating it (escalate.ts) both read this, so they can't disagree.
+ *
+ * For a lined-up close-up that is what is on the spot aimed at, whichever cell it falls in, from the
+ * photos that had it in frame. `settled` is false when those show no finding of the kind looked for.
+ */
+export interface MissionView {
+  photos: Observation[];
+  assessment: CellAssessment;
+  aimed: boolean;
+  settled: boolean;
+}
+
+export function missionView(cell: number, obs: Observation[]): MissionView {
+  if (!obs.some((o) => o.align)) {
+    const photos = creditByCell(obs).get(cell) ?? [];
+    return { photos, assessment: assessCell(cell, photos), aimed: false, settled: true };
+  }
+  const photos = obs
+    .filter((o) => o.align?.status !== 'off_centre')
+    .map((o) => ({ ...o, cell, detections: o.detections.filter((d) => onSpot(d, o.align?.at)) }));
+  const a = assessCell(cell, photos.map((o) => ({ ...o, align: null, fouling: null })));
+  const kind = obs.find((o) => o.align?.kind)?.align?.kind;
+  const opening = a.status === 'confirmed_opening' || a.status === 'possible_opening';
+  const wear = kind === 'wear' && a.wear >= 0.7;
+  const fouling = kind === 'fouling' && a.fouling >= 0.3;
+  const status = opening ? a.status : wear ? 'wear' : fouling ? 'fouled' : a.status === 'clear' || a.status === 'unclear' ? a.status : 'uncertain';
+  return { photos, assessment: { ...a, status }, aimed: true, settled: photos.length > 0 && (opening || wear || fouling) };
+}
+
+function aimedResult({ photos, assessment: a, settled }: MissionView): string {
+  if (photos.length === 0) return 'not inspected: could not get the spot centred in the frame';
+  if (settled) return a.status === 'fouled' ? `confirmed: fouling, no opening found (p=${a.fouling.toFixed(2)})` : cellResult(a);
+  const signs = [a.opening > 0 ? `possible opening p=${a.opening.toFixed(2)}` : '', a.wear > 0 ? `wear sign p=${a.wear.toFixed(2)}` : ''].filter(Boolean);
+  return signs.length
+    ? `not conclusive: spot centred, but the detector is not sure what it is (${signs.join(', ')})`
+    : 'not found again: spot centred at close range, nothing detected there';
+}
+
 /** Closes each mission whose photos came back, with what they showed. */
 function closeMissions(store: Store, targetIds: Set<string>): ImportResult['missionsClosed'] {
   const closed: ImportResult['missionsClosed'] = [];
@@ -193,16 +266,13 @@ function closeMissions(store: Store, targetIds: Set<string>): ImportResult['miss
     if (!row || row.status === 'done' || row.status === 'cancelled') continue;
     const obs = observations(store, { penId: row.pen_id, targetId });
     if (obs.length === 0) continue;
+    const cell = obs[0].cell;
     const credited = creditByCell(obs);
-    const a = assessCell(obs[0].cell, credited.get(obs[0].cell) ?? []);
+    const view = missionView(cell, obs);
+    const aimed = view.aimed;
+    const result = aimed ? aimedResult(view) : cellResult(view.assessment);
     // What the close-ups showed next door: the next plan picks these up as their own cells.
-    const nextDoor = [...credited].filter(([c, o]) => c !== obs[0].cell && assessCell(c, o).opening >= 0.7).map(([c]) => c);
-    const result =
-      a.status === 'confirmed_opening' ? `confirmed: opening seen from ${a.openingViews} viewpoints (best p=${a.opening.toFixed(2)})`
-      : a.status === 'possible_opening' ? `possible opening (p=${a.opening.toFixed(2)}), one view only`
-      : a.status === 'wear' ? `confirmed: wear sign (p=${a.wear.toFixed(2)})`
-      : a.status === 'clear' ? `clear: ${a.images} good image${a.images > 1 ? 's' : ''}, nothing found`
-      : `${a.status}: needs another look`;
+    const nextDoor = aimed ? [] : [...credited].filter(([c, o]) => c !== cell && assessCell(c, o).opening >= 0.7).map(([c]) => c);
     const extra = nextDoor.length ? `; possible opening next door in cell ${nextDoor.join(', ')}` : '';
     const robots = [...new Set(obs.map((o) => o.auv).filter((x): x is number => x !== null))].map((k) => `AUV-${k}`).join(', ');
     updateMission(store, missionId, { status: 'done', robot: robots || undefined, result: result + extra });
@@ -219,29 +289,29 @@ const view = (dTheta = 0, dDepth = 0) => ({ d_theta_deg: dTheta, d_depth_frac: d
 function profilesFor(a: CellAssessment | null, risk: { level: string; score: number }): Profile[] {
   const out: Profile[] = [];
   if (a?.status === 'possible_opening') {
-    out.push({ kind: 'close_inspection', priority: 1, robots: 2, scan: { standoff_m: 1.4, shots: 2, viewpoints: [view(-6), view(6)] }, safety: { margin_m: 1.0 },
+    out.push({ kind: 'close_inspection', priority: 1, robots: 2, scan: { standoff_m: CLOSE_INSPECTION_M, shots: 2, viewpoints: [view(-6), view(6)] }, safety: { margin_m: 1.0 },
       reason: { rule: 'P1', text: `Possible opening (p=${a.opening.toFixed(2)}) seen once: confirm from two sides with two robots, keep off the net.` } });
   }
   if (a?.status === 'wear') {
-    out.push({ kind: 'close_inspection', priority: 0.7, robots: 1, scan: { standoff_m: 1.2, shots: 2, viewpoints: [view()] }, safety: { margin_m: 0.9 },
+    out.push({ kind: 'close_inspection', priority: 0.7, robots: 1, scan: { standoff_m: CLOSE_INSPECTION_M, shots: 2, viewpoints: [view()] }, safety: { margin_m: 0.9 },
       reason: { rule: 'P5', text: `Wear sign (p=${a.wear.toFixed(2)}): look closer, keep extra distance from weakened twine.` } });
   }
   if (a?.status === 'uncertain') {
     const p = Math.max(a.opening, a.wear);
-    out.push({ kind: 'reimage', priority: Number((0.6 + 0.3 * p).toFixed(2)), robots: 1, scan: { standoff_m: 1.0, shots: 3, viewpoints: [view()] }, safety: { margin_m: 0.6 },
+    out.push({ kind: 'reimage', priority: Number((0.6 + 0.3 * p).toFixed(2)), robots: 1, scan: { standoff_m: CLOSE_INSPECTION_M, shots: 3, viewpoints: [view()] }, safety: { margin_m: 0.6 },
       reason: { rule: 'P2', text: `Unsure (p=${p.toFixed(2)}): re-image closer and with more shots.` } });
   }
   if (a?.status === 'unclear') {
     // Risk-weighted, so if the whole sweep is murky the robots look first where risk is highest.
-    out.push({ kind: 'reimage', priority: Number((0.45 + 0.1 * risk.score).toFixed(2)), robots: 1, scan: { standoff_m: 0.9, shots: 2, viewpoints: [view()] }, safety: { margin_m: 0.6 },
+    out.push({ kind: 'reimage', priority: Number((0.45 + 0.1 * risk.score).toFixed(2)), robots: 1, scan: { standoff_m: CLOSE_INSPECTION_M, shots: 2, viewpoints: [view()] }, safety: { margin_m: 0.6 },
       reason: { rule: 'P3', text: `Image too poor to judge (quality ${a.quality.toFixed(2)}): go closer.` } });
   }
   if (a && a.fouling >= 0.4 && a.status !== 'confirmed_opening') {
-    out.push({ kind: 'reimage', priority: 0.5, robots: 1, scan: { standoff_m: 1.2, shots: 1, viewpoints: [view(-8), view(8)] }, safety: { margin_m: 0.6 },
+    out.push({ kind: 'reimage', priority: 0.5, robots: 1, scan: { standoff_m: CLOSE_INSPECTION_M, shots: 1, viewpoints: [view(-8), view(8)] }, safety: { margin_m: 0.6 },
       reason: { rule: 'P4', text: `Fouling covers ${Math.round(a.fouling * 100)}% and can hide holes: look from two angles.` } });
   }
   if ((risk.level === 'high' || risk.level === 'critical') && a?.status !== 'confirmed_opening' && a?.status !== 'clear') {
-    out.push({ kind: 'close_inspection', priority: Number((0.35 + 0.4 * risk.score).toFixed(2)), robots: 1, scan: { standoff_m: 1.2, shots: 2, viewpoints: [view()] }, safety: { margin_m: 0.8 },
+    out.push({ kind: 'close_inspection', priority: Number((0.35 + 0.4 * risk.score).toFixed(2)), robots: 1, scan: { standoff_m: CLOSE_INSPECTION_M, shots: 2, viewpoints: [view()] }, safety: { margin_m: 0.8 },
       reason: { rule: 'P6', text: `Risk model: ${risk.level} (${risk.score.toFixed(2)}) from history and exposure.` } });
   }
   return out;
@@ -289,6 +359,30 @@ function merge(profiles: Profile[], marginBoost: number): Profile & { reasons: P
 
 const angleDist = (a: number, b: number): number => Math.abs(((a - b + 540) % 360) - 180);
 
+const median = (xs: number[]): number => {
+  const s = [...xs].sort((a, b) => a - b);
+  return (s[Math.floor((s.length - 1) / 2)] + s[Math.ceil((s.length - 1) / 2)]) / 2;
+};
+
+/**
+ * Where in this cell the defect was seen, so the close-up goes there and not to the cell centre.
+ * Openings before wear before fouling; from the closest photos that saw it, as they place it best.
+ */
+export function aimFor(cell: number, obs: Observation[]): PlanTarget['aim'] {
+  const kinds = [['opening', OPENING], ['wear', WEAR], ['fouling', new Set(['biofouling'])]] as const;
+  const centre = ((cell % GRID.sectors) + 0.5) * (360 / GRID.sectors);
+  for (const [kind, classes] of kinds) {
+    const seen = obs.flatMap((o) =>
+      o.detections.filter((d) => d.at && classes.has(d.class) && d.confidence >= 0.3).map((d) => ({ at: d.at!, from: o.standoffM ?? Infinity })));
+    if (seen.length === 0) continue;
+    const nearest = Math.min(...seen.map((s) => s.from));
+    const best = seen.filter((s) => s.from <= nearest + 0.5);
+    const theta = centre + median(best.map((s) => ((s.at.theta_deg - centre + 540) % 360) - 180));
+    return { theta_deg: Number(((theta + 360) % 360).toFixed(2)), depth_frac: Number(median(best.map((s) => s.at.depth_frac)).toFixed(4)), kind };
+  }
+  return undefined;
+}
+
 /**
  * Builds the plan for one pen: targets best first, robots assigned so each goes where it is
  * closest and least busy, and two robots on anything that needs two perspectives.
@@ -321,7 +415,16 @@ export function buildPlan(
   }
   // Ties go to the riskier area, not the lower cell number.
   candidates.sort((a, b) => b.priority - a.priority || b.risk - a.risk || a.cell - b.cell);
-  const chosen = candidates.slice(0, input.maxTargets ?? 10);
+  // One defect often reaches into several cells. Send the robots to it once, for the highest-ranked.
+  const chosen: Array<(typeof candidates)[number] & { aim: PlanTarget['aim'] }> = [];
+  for (const c of candidates) {
+    if (chosen.length >= (input.maxTargets ?? 10)) break;
+    const aim = aimFor(c.cell, byCell.get(c.cell) ?? []);
+    const same = aim && chosen.find((t) => t.aim?.kind === aim.kind
+      && angleDist(t.aim.theta_deg, aim.theta_deg) <= SAME_SPOT.thetaDeg && Math.abs(t.aim.depth_frac - aim.depth_frac) <= SAME_SPOT.depthFrac);
+    if (same) same.reasons.push({ rule: 'M1', text: `Also covers cell ${c.cell}: the same spot on the net.` });
+    else chosen.push({ ...c, aim });
+  }
 
   // Robots start in the middle of their usual sector; each pick moves the robot and adds load.
   const robot = Array.from({ length: nRobots }, (_, k) => ({ id: k, at: ((k + 0.5) * 360) / nRobots, load: 0 }));
@@ -340,7 +443,7 @@ export function buildPlan(
       depth_frac: Number(((row + 0.5) / GRID.wallRows).toFixed(4)),
       priority: t.priority, priority_label: t.priority >= 0.8 ? 'high' : t.priority >= 0.5 ? 'normal' : 'low',
       reasons: [{ rule: 'area', text: `${label} (cell ${t.cell})` }, ...t.reasons],
-      scan: t.scan, safety: t.safety, robots: picks.map((p) => p.id).sort((a, b) => a - b),
+      ...(t.aim ? { aim: t.aim } : {}), scan: t.scan, safety: t.safety, robots: picks.map((p) => p.id).sort((a, b) => a - b),
     };
   });
 

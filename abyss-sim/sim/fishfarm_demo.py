@@ -65,6 +65,8 @@ parser.add_argument("--hq", action="store_true",
 parser.add_argument("--out", default="fence_captures")
 parser.add_argument("--no-fish", action="store_true")
 parser.add_argument("--headless", action="store_true")
+parser.add_argument("--close-when-done", action="store_true",
+                    help="with the GUI: close 8 s after the inspection ends (as headless does), e.g. inside run_loop.ps1")
 parser.add_argument("--record", default=None,
                     help="save video frames + telemetry to this folder (works headless; then run make_video.py)")
 parser.add_argument("--record-cams", default="demo,section,auv0,auv1,auv2",
@@ -112,6 +114,8 @@ parser.add_argument("--oceansim-ext", default="isaacsim.oceansim",
 parser.add_argument("--plan", default=None,
                     help="fly the decision layer's plan.json (ranked targets) instead of the coverage sweep. "
                          "Use the same --standoff, --bands, --obstacles and --defect-seed as the sweep, so the scene matches")
+parser.add_argument("--no-align", action="store_true",
+                    help="with --plan: photograph from the planned spot without lining up on the live picture")
 parser.add_argument("--plan-revisits", type=int, default=0,
                     help="fly the plan targets this many extra times, spread through the coverage cells")
 parser.add_argument("--plan-coverage", type=int, default=0,
@@ -927,6 +931,9 @@ if args.plan:
     PLAN_STATUS = {t["target_id"]: {"cell": t["cell"], "robots": t["robots"], "photos": {}, "timeouts": 0,
                                     "blocked": []} for t in PLAN["targets"]}
     for k in range(N_AUV):
+        # An aimed close-up with a rope in the way moves round or back to a spot that sees the point.
+        plans[k] = [(pm.clear_view(w, w["standoff"], OBSTACLES, CAGE_R, CAGE_DEPTH) or w) if "aim_kind" in w else w
+                    for w in plans[k]]
         plans[k], blocked = pm.drop_blocked(plans[k], OBSTACLES)
         for w in blocked:                    # reported, so the decision layer can re-plan the target
             if w["target_id"]:
@@ -1054,6 +1061,7 @@ os.makedirs(args.out, exist_ok=True)
 for k in range(N_AUV):
     os.makedirs(os.path.join(args.out, f"auv_{k}"), exist_ok=True)
 meta_file = open(os.path.join(args.out, "captures.jsonl"), "w")
+align_log = open(os.path.join(args.out, "align.jsonl"), "w")    # one line per look while lining up
 with open(os.path.join(args.out, "ground_truth.json"), "w") as f:
     json.dump({"run_id": RUN_ID, "defect_seed": args.defect_seed,
                "grid": {"ui_sectors": UI_SECTORS, "ui_wall_rows": UI_WALL_ROWS,
@@ -1138,6 +1146,15 @@ def enter_waypoint(k, t, pos_k):
 # A plan sends robots across the pen, so they need a way round the ropes, not just a filter that stops
 # them at one. It uses the rope map, so not in --perception mode. The coverage sweep needs none.
 ROUTERS = [pm.Router(OBSTACLES, CAGE_R) for _ in range(N_AUV)] if PLAN and NAV and not args.perception else None
+# A plan target with an `aim` is lined up on from the live picture (sim/align.py), with the same
+# detector that reads the photos afterwards.
+ALIGN = bool(PLAN) and not args.no_align and any(t.get("aim") for t in PLAN["targets"])
+if ALIGN:
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools"))
+    import align as al
+    import run_vision as rv          # needs opencv-python (Isaac Sim's python has it)
+    VISION_GRID = {"ui_sectors": UI_SECTORS, "ui_wall_rows": UI_WALL_ROWS,
+                   "cage_radius_m": CAGE_R, "cage_depth_m": CAGE_DEPTH}
 prev_q = [None] * N_AUV
 sim_t = [0.0]
 for k in range(N_AUV):
@@ -1171,6 +1188,53 @@ def target(k):
     if s["wait"]:
         return s["hold"], wp["yaw"]
     return wp["pos"], wp["yaw"]
+
+
+def yaw_of(q):
+    return math.atan2(2 * (q[0] * q[3] + q[1] * q[2]), 1 - 2 * (q[2] ** 2 + q[3] ** 2))
+
+
+def alignment_record(wp, status, offset, range_m, moves):
+    """What captures.jsonl says about a lined-up photo: how well, and on which spot."""
+    return {"status": status, "offset": offset, "range_m": range_m, "moves": moves, "kind": wp["aim_kind"],
+            "at": {"theta_deg": round(math.degrees(wp["theta"]) % 360, 2),
+                   "depth_frac": round(-wp["aim_z"] / CAGE_DEPTH, 4)}}
+
+
+def align_step(k, t, frame, position, yaw):
+    """AUV k has settled at an aimed waypoint: look at the live picture and either move to centre the
+    defect (returns False) or accept the photo (returns True, with wp["alignment"] filled in)."""
+    wp = plans[k][state[k]["wp"]]
+    if "aligner" not in wp:
+        wp["aligner"] = al.Aligner(wp["aim_kind"], wp["theta"], wp["aim_z"], wp["planned_standoff"],
+                                   RES[0] / RES[1])
+    live = {"image": "live", "target_id": wp["target_id"], "position": [float(v) for v in position],
+            "yaw_deg": math.degrees(yaw), "theta_deg": math.degrees(wp["theta"]), "depth": wp["z"],
+            "look_dist": wp["look_dist"]}
+    seen = rv.report(live, np.ascontiguousarray(frame[:, :, ::-1]), VISION_GRID)["detections"]
+    action, info = wp["aligner"].look(live["position"], yaw, seen, CAGE_R)
+    found = al.match(seen, wp["aim_kind"], info["theta"], info["z"], CAGE_R)
+    if action == "move":
+        moved = pm.clear_view(dict(wp, theta=info["theta"], aim_z=info["z"]), info["standoff"], OBSTACLES,
+                              CAGE_R, CAGE_DEPTH)
+        if moved is None:                          # a rope hides it from every side tried
+            action, info = "shoot", dict(info, status="off_centre")
+    shown = {"auv": k, "target_id": wp["target_id"], "t": round(t, 3), "action": action,
+             "status": info.get("status"), "moves": info["moves"], "offset": info["offset"],
+             "range_m": info["range_m"], "standoff": wp["planned_standoff"], "seen": info["seen"],
+             "bbox": found["bbox"] if found else None,
+             "class": found["class"] if found else None,
+             "confidence": found["confidence"] if found else None}
+    print(json.dumps(shown), file=align_log)
+    align_log.flush()
+    nav[k]["align"] = shown
+    print(f"[align] auv_{k} {wp['target_id']}: {'sees it' if info['seen'] else 'nothing seen'}, "
+          f"offset {info['offset']}, range {info['range_m']} m -> {info.get('status') or 'move ' + str(info['moves'])}")
+    if action == "shoot":
+        wp["alignment"] = alignment_record(wp, info["status"], info["offset"], info["range_m"], info["moves"])
+        return True
+    wp.update({key: moved[key] for key in ("pos", "yaw", "theta", "aim_z", "z", "look_dist", "standoff")})
+    return False
 
 
 def physics_step(dt):
@@ -1357,7 +1421,7 @@ def record_frame(t, pos):
                     "u_nom": np.round(nav[k]["u_nom"], 3).tolist(), "u_safe": np.round(nav[k]["u_safe"], 3).tolist(),
                     "filter": bool(nav[k]["interv"]), "clr": round(float(nav[k].get("clr", 9.0)), 3),
                     "min_clr": round(float(min(nav[k]["min_clr"], 9.0)), 3), "contacts": nav[k]["contacts"],
-                    "shots": counts[k], "done": bool(state[k]["done"])})
+                    "shots": counts[k], "done": bool(state[k]["done"]), "align": nav[k].get("align")})
     rec = {"i": idx, "t": round(t, 3), "eye": [round(v, 4) for v in demo_eye],
            "eyes": {"demo": [round(v, 4) for v in demo_eye], "section": [round(v, 4) for v in section_eye]},
            "rov": rov, "shot": REC["shots"]}
@@ -1412,7 +1476,7 @@ while simulation_app.is_running():
     if not world.is_playing():
         continue
     t = sim_t[0]
-    if (args.record or args.headless) and finish_t is not None and t - finish_t > 8.0:
+    if (args.record or args.headless or args.close_when_done) and finish_t is not None and t - finish_t > 8.0:
         break                                   # headless / recording: stop 8 s after the inspection ends
     update_fish(t)
     update_demo_cam(t)
@@ -1486,6 +1550,12 @@ while simulation_app.is_running():
         set_cam_rendering(k, False)
         s["cam_on"] = False
         wp = plans[k][s["wp"]]
+        if ALIGN and "aim_kind" in wp and "alignment" not in wp:
+            if s["timeout"]:                     # never got there: say so instead of lining up
+                wp["alignment"] = alignment_record(wp, "off_centre", None, None, 0)
+            elif not align_step(k, t, data, pos[k], yaw_of(np.asarray(quat[k], float))):
+                s.update(settle=0, t_wp=t, pending=False)
+                continue
         # fname keeps forward slashes: it is a relative path recorded in captures.jsonl and
         # read back on any platform. The path we actually write is built with os.path.join,
         # because mixing separators ("...\\auv_1/img.png") is rejected on Windows.
@@ -1504,6 +1574,8 @@ while simulation_app.is_running():
                "yaw_deg": round(math.degrees(yaw_now), 2),
                "look_dist": round(float(wp.get("look_dist", STANDOFF)), 3),
                "timeout": s["timeout"], **lab}
+        if "alignment" in wp:
+            rec["alignment"] = wp["alignment"]   # how well the defect was lined up (sim/align.py)
         if PLAN is not None:
             # The plan's cell, not ui_cell(theta): an offset viewpoint can sit over the next cell.
             rec.update(cell=wp["cell"], plan_id=PLAN["plan_id"], viewpoint=wp["viewpoint"], visit=wp["visit"])
@@ -1551,6 +1623,7 @@ while simulation_app.is_running():
                       f"filter active {100 * nav[k]['n_interv'] / max(nav[k]['n_steps'], 1):.0f}% of steps")
 
 meta_file.close()
+align_log.close()
 if REC is not None:
     REC["tel"].close()
     print("[rec] finishing frame writes...")

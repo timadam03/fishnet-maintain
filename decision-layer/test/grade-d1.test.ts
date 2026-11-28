@@ -82,7 +82,7 @@ test('the d1 plan: d1 reorders and reclassifies, the plan rules still set distan
   const d1 = buildPlan(store, { penId: PEN, day: TODAY, robots: 3, grades: g.grades });
   assert.equal(rules.targets[0].cell, 100);
   assert.equal(d1.targets[0].cell, 50);
-  assert.equal(d1.rules_version, 'plan-v1+d1');
+  assert.equal(d1.rules_version, 'plan-v2+d1');
   const t50 = d1.targets[0];
   assert.equal(t50.reasons[1].rule, 'D1');
   assert.equal(t50.robots.length, 2); // P1 for a possible opening: two robots, two sides
@@ -99,7 +99,7 @@ test('d1 failing for a cell falls back to the rules for that cell and says so', 
   assert.equal(g.grades.get(100)!.status, 'possible_opening');
   const plan = buildPlan(store, { penId: PEN, day: TODAY, robots: 3, grades: g.grades });
   assert.ok(plan.targets[0].reasons.some((r) => r.rule === 'D1-fallback' && /rate limited/.test(r.text)));
-  assert.equal(plan.rules_version, 'plan-v1');
+  assert.equal(plan.rules_version, 'plan-v2');
 });
 
 test('the d1 state names the cell, its photos, its neighbours and the area risk', () => {

@@ -40,6 +40,8 @@ response says which one answered.
 | `AGENT_MODEL` | Chat model with tool calling | Investigator and curator | `nvidia/nemotron-3.5-lightning-free`. A plain Gemini name (e.g. `gemini-3.8-flash`) uses an AI Studio key instead |
 | `AI_GATEWAY_API_KEY` | | Key for every gateway model | |
 | `GOOGLE_GENERATIVE_AI_API_KEY` | | Only for a plain Gemini name in `AGENT_MODEL` | |
+| `FARM_ID` | | Tags this site's cases in the case library and the export (default `farm-demo`) | |
+| `REVIEWER` | | Default name for `review` | |
 | `SHOAL_DB` | | SQLite file for reviews, alert closures, proposals, d1 cache and chat (default `../shoal.db`) | |
 
 ## Run
@@ -56,6 +58,12 @@ npm run cli -- missions requested            # work waiting for the robots
 npm run cli -- mission 1 done confirmed      # report a result, as a robot would
 npm run cli -- import <run_dir>              # Isaac captures + vision.jsonl → observations, closes missions
 npm run cli -- plan --out plan.json          # inspection plan for the robots (see docs/contracts.md)
+npm run cli -- escalate <run_dir> --grader d1   # d1 #2 on each closed mission's close-ups: critical? engineer? reports in <run_dir>/reports
+npm run cli -- review                        # the engineer's queue (review all: every case), and how often engineers agreed
+npm run cli -- review 3 approve --by Ola      # or: reject (false alarm), edit <file.md> (real, with the engineer's own report)
+npm run cli -- report 3                      # print case 3's report
+npm run cli -- export-cases cases.jsonl      # reviewed cases as training data (appends; FARM_ID tags the farm)
+npm run cli -- import-cases other_farm.jsonl # another farm's cases: calibrate d1 #2 and give the report agent examples
 npm run stand-in-vision -- <run_dir>         # stand-in vision.jsonl from Isaac ground truth, until the real pipeline is wired
 npm run contracts                            # regenerate ../contracts/ (schemas and example run)
 npm run cli -- reset          # clear reviews, closures, proposals, chat, decision log, missions and observations
@@ -91,7 +99,10 @@ npm run typecheck
 | `POST /api/missions/:id` | `{status: assigned\|done\|cancelled, robot?, result?, note?}` | the mission; for robots or the simulator |
 | `POST /api/observations` | `{pen_id, captures, reports, cage_radius_m?}` | `{imported, awaitingVision, unmatchedReports, missionsClosed}` |
 | `GET /api/plan?pen=&robots=&day=` | | inspection plan (contracts/inspection-plan.schema.json) |
-| `POST /api/reset` | | `{ok}` |
+| `GET /api/escalations?status=` | | `{cases, agreement}`: the engineer's queue (`pending` by default; `all`, `approved`, `edited`, `rejected`, `not_needed`) |
+| `GET /api/escalations/:case` | | one case: decision, d1 #2 answers, photos, detector output, report, review |
+| `POST /api/escalations/:case/review` | `{verdict: real\|false_alarm, reviewer?, note?, final_report_md?}` | the case; a changed report files as `edited` |
+| `POST /api/reset` | | `{ok}` (keeps the case library) |
 
 `GET /api/alerts` and `GET /api/pens/:id` record the requested day in the decision log before answering.
 

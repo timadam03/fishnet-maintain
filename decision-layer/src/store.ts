@@ -64,6 +64,8 @@ export class Store {
     // Added after the first runs: which cells each photo shows (vision report cells_in_view).
     const cols = this.db.prepare('PRAGMA table_info(observations)').all() as Array<{ name: string }>;
     if (!cols.some((c) => c.name === 'cells_json')) this.db.exec('ALTER TABLE observations ADD COLUMN cells_json TEXT');
+    // And, for a close-up, how well it was lined up and on which spot (capture alignment).
+    if (!cols.some((c) => c.name === 'align_json')) this.db.exec('ALTER TABLE observations ADD COLUMN align_json TEXT');
   }
 
   addReview(findingId: number, status: ReviewStatus, note: string | null): void {

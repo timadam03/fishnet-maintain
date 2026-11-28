@@ -77,7 +77,7 @@ test('plan: possible hole first, two robots, two sides, extra margin; reachable 
   assert.equal(hole.robots.length, 2);
   assert.equal(hole.scan.viewpoints.length, 2);
   assert.ok(hole.safety.margin_m >= 1.0);
-  assert.equal(target(plan, 100)!.scan.standoff_m, 1.15); // P2 asks for 1.0 m; S1 keeps it reachable under a 0.6 m margin
+  assert.equal(target(plan, 100)!.scan.standoff_m, 2.2); // the distance the detector can read at
   assert.deepEqual(target(plan, 60)!.reasons.map((r) => r.rule), ['area', 'P4']);
   assert.equal(target(plan, 5), undefined);
   for (const t of plan.targets) assert.ok(t.scan.standoff_m >= t.safety.margin_m + 0.55, `target ${t.target_id} unreachable`);
@@ -128,4 +128,45 @@ test('strong current widens every safety margin (G1)', () => {
   const storm = buildPlan(store, { penId: PEN, day: 59, robots: 3 }); // the simulated storm
   assert.equal(target(storm, 30)!.safety.margin_m, Number((target(calm, 30)!.safety.margin_m + 0.4).toFixed(2)));
   assert.ok(target(storm, 30)!.reasons.some((r) => r.rule === 'G1'));
+});
+
+test('the close-up aims where the defect was seen, and one spot gets one target', () => {
+  const store = new Store(':memory:');
+  const caps = [capture('run1', 1, 30, SWEEP), capture('run1', 2, 31, SWEEP)];
+  const hole = (image: string, cell: number, theta_deg: number) => ({
+    image, model: 'm', quality: { visibility: 1, sharpness: 1 },
+    detections: [{ class: 'hole', confidence: 0.9, bbox: [0, 0, 9, 9], cell, at: { theta_deg, depth_frac: 0.2 } }],
+  });
+  // Cells 30 and 31 meet at 105 deg: both detections are the same hole on the border.
+  importObservations(store, { penId: PEN, captures: caps, reports: [hole(caps[0].image, 30, 104), hole(caps[1].image, 31, 106)], cageRadiusM: R });
+  const plan = buildPlan(store, { penId: PEN, day: TODAY });
+  const aimed = plan.targets.filter((t) => t.aim);
+  assert.equal(aimed.length, 1);
+  assert.equal(aimed[0].aim!.kind, 'opening');
+  assert.ok([104, 106].includes(aimed[0].aim!.theta_deg), 'the detection, not the cell centre');
+  assert.ok(aimed[0].reasons.some((r) => r.rule === 'M1'));
+});
+
+test('a close-up that missed the spot says so and never marks the cell clear', () => {
+  for (const [status, expected] of [['off_centre', /could not get the spot centred/], ['not_seen', /nothing detected there/]] as const) {
+    const store = new Store(':memory:');
+    importAll(store, firstPass());
+    const t = target(buildPlan(store, { penId: PEN, day: TODAY }), 100)!;
+    const result = importAll(store, [capture('run2', 9, 100, t.scan.standoff_m, { alignment: { status } }, 0, t.target_id)]);
+    assert.match(result.missionsClosed[0].result, expected);
+    assert.notEqual(assessCell(100, observations(store, { penId: PEN, cell: 100 })).status, 'clear');
+  }
+});
+
+test('an aimed result is what is on the spot, even when that falls in the next cell', () => {
+  const store = new Store(':memory:');
+  importAll(store, firstPass());
+  const t = target(buildPlan(store, { penId: PEN, day: TODAY }), 30)!;
+  const at = { theta_deg: 104, depth_frac: 0.2 };
+  const shot = capture('run2', 9, 30, 2.2, { alignment: { status: 'aligned', kind: 'opening', at } }, 0, t.target_id);
+  const detections = [{ class: 'mesh_opening', confidence: 0.56, bbox: [0, 0, 9, 9], cell: 31, at: { theta_deg: 106, depth_frac: 0.2 } }];
+  const result = importObservations(store, {
+    penId: PEN, captures: [shot], reports: [{ image: shot.image, model: 'm', quality: { visibility: 1, sharpness: 1 }, detections }], cageRadiusM: R,
+  });
+  assert.match(result.missionsClosed[0].result, /^not conclusive: .*possible opening p=0.56/);
 });

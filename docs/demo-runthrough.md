@@ -117,3 +117,16 @@ The robot chapters play the recording at `--speed` (default 4x). The script read
 - **Layout and colours** live at the top of `make_runthrough.py`: `CLASS_COLORS`, `PRIORITY_COLORS` and the chapter functions.
 - **Robot chapter rendering:** they go through `make_video.compose`, so the overlays (HOCBF arrows, panel, ROV tiles) match the per-run videos.
 - **Tests:** `uv run --with numpy --with pillow --with pytest pytest abyss-sim/tests`. Or, with pip: `pip install numpy pillow pytest` and `pytest abyss-sim/tests`.
+
+## 9. The two-minute demo (`make_demo.py`)
+
+The current demo, in the operator UI's look: Survey, Detect, Rank, Inspect (the robots lining up on
+the defect), Escalate. It needs a loop folder with both recordings, `align.jsonl`, and a database in
+`run_plan_<grader>\shoal.db` that has had the import and `npm run cli -- escalate`.
+
+```powershell
+python abyss-sim\tools\make_demo.py C:\abyss_out\final --font C:\abyss_out\fonts\IBMPlexSans.ttf
+```
+
+Record the sweep with `demo,section,auv0,auv1,auv2` and the plan run with `demo,auv0,auv1,auv2`, both
+at `--record-res 1920x1080 --record-every 2`. `--featured m1,m2,m4` picks the close-ups shown in full.

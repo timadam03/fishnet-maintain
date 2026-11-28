@@ -39,14 +39,14 @@
       "maximum": 1
     },
     "cells_in_view": {
+      "description": "Every cell the photo shows: \"looked, nothing there\" counts for all of them, not just the capture cell",
       "type": "array",
       "items": {
         "type": "integer",
         "minimum": 0,
         "maximum": 191,
         "description": "Wall cell on the UI grid: row * 24 + col"
-      },
-      "description": "Every cell the photo shows: \"looked, nothing there\" counts for all of them, not just the capture cell"
+      }
     },
     "detections": {
       "type": "array",
@@ -93,10 +93,10 @@
             "description": "[x, y, w, h] in pixels"
           },
           "cell": {
+            "description": "Cell the detection itself is on (from its pixel position); default: the capture cell",
             "type": "integer",
             "minimum": 0,
-            "maximum": 191,
-            "description": "Cell the detection itself is on (from its pixel position); default: the capture cell"
+            "maximum": 191
           },
           "severity": {
             "type": "string",
@@ -110,6 +110,24 @@
             "description": "Estimated size of the defect",
             "type": "number",
             "minimum": 0
+          },
+          "at": {
+            "description": "Where on the net wall the detection is (from its pixel position); the close-up aims here",
+            "type": "object",
+            "properties": {
+              "theta_deg": {
+                "type": "number"
+              },
+              "depth_frac": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            },
+            "required": [
+              "theta_deg",
+              "depth_frac"
+            ]
           },
           "crop": {
             "type": "string"

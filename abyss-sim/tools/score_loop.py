@@ -133,7 +133,7 @@ def main():
                 cell = json.loads(cells_json)[0]
                 said_open = result.startswith(("confirmed: opening", "possible opening"))
                 said_wear = result.startswith("confirmed: wear")
-                said_clear = result.startswith("clear")
+                said_clear = result.startswith(("clear", "not found again"))
                 k = kind(cell)
                 ok = (k == "HOLE" and said_open) or (k == "thin" and (said_wear or said_open)) or (k in ("-", "foul") and said_clear)
                 right += ok
