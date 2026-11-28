@@ -28,6 +28,7 @@ import argparse
 import json
 import math
 import os
+import pathlib
 import sqlite3
 import subprocess
 import sys
@@ -53,14 +54,14 @@ HEADER_H = 96
 def read_jsonl(path):
     if not os.path.isfile(path):
         return []
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return [json.loads(line) for line in f if line.strip()]
 
 
 def read_json(path):
     if not os.path.isfile(path):
         return None
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -106,25 +107,57 @@ class Recording:
 def mission_results(plan, db_paths):
     """target_id -> mission result, read from the decision layer's database.
 
-    Each loop starts with `reset`, so a database from a later loop holds other missions under the
-    same ids. A result is only used when the row's cells contain the target's cell.
+    Each loop starts with `reset`, which restarts the mission ids, so a database from a later loop
+    (say the d1 loop on the same sweep) holds other missions under the same ids, often on the same
+    cells. A row only counts when its cells contain the target's cell and it was created no later
+    than the plan: a plan's missions exist before the plan is written.
     """
     for db in db_paths:
         if not db or not os.path.isfile(db):
             continue
         out = {}
-        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
         try:
-            for t in plan["targets"]:
-                row = con.execute("SELECT cells_json, status, result FROM missions WHERE id = ?",
-                                  (t["mission_id"],)).fetchone()
-                if row and t["cell"] in json.loads(row[0]) and row[1] == "done":
-                    out[t["target_id"]] = row[2] or ""
-        finally:
-            con.close()
+            con = sqlite3.connect(pathlib.Path(db).resolve().as_uri() + "?mode=ro", uri=True)
+            try:
+                for t in plan["targets"]:
+                    row = con.execute("SELECT cells_json, status, result, created_at FROM missions WHERE id = ?",
+                                      (t["mission_id"],)).fetchone()
+                    if row and t["cell"] in json.loads(row[0]) and row[1] == "done" \
+                            and (not plan.get("created_at") or row[3] <= plan["created_at"]):
+                        out[t["target_id"]] = row[2] or ""
+            finally:
+                con.close()
+        except sqlite3.Error as exc:
+            print(f"[runthrough] can't read missions from {db}: {exc}")
+            continue
         if out:
             return out, db
     return {}, None
+
+
+def pick_photos(reports, plan, n):
+    """Which sweep photos the classifier chapter shows, in the order they were taken.
+
+    First, for each plan target, the photo with the strongest detection on that target's cell: the
+    evidence behind the decisions. Then other photos with detections, spread over the run, and two
+    where nothing was found.
+    """
+    chosen = []
+    for t in plan["targets"]:
+        best, conf = None, 0.0
+        for i, r in enumerate(reports):
+            for d in (r or {}).get("detections", []):
+                if d.get("cell") == t["cell"] and d["confidence"] > conf:
+                    best, conf = i, d["confidence"]
+        if best is not None and best not in chosen:
+            chosen.append(best)
+    hits = [i for i, r in enumerate(reports) if r and r.get("detections") and i not in chosen]
+    room = max(0, n - 2 - len(chosen))
+    if hits and room:
+        chosen += [hits[int(k * len(hits) / room)] for k in range(min(room, len(hits)))]
+    clean = [i for i, r in enumerate(reports) if r and not r.get("detections")]
+    chosen += clean[:min(2, max(0, n - len(chosen)))]
+    return sorted(set(chosen[:n]))
 
 
 # ------------------------------------------------------------------------------------------ drawing
@@ -412,15 +445,13 @@ def photo_chapter(out, th, run, step, title, subtitle, per_photo):
         out.add(img, per_photo)
 
 
-def classifier_chapter(out, th, run, args):
+def classifier_chapter(out, th, run, plan, args):
     reports = [run.vision.get(c["image"]) for c in run.captures]
     if not any(reports):
         title_card(out, th, 1, "Classifier", ["No vision.jsonl in the sweep folder: run run_vision.py first."], 3)
         return NetMap()
     model = next(r["model"] for r in reports if r)
-    with_hits = [i for i, r in enumerate(reports) if r and r.get("detections")]
-    clean = [i for i, r in enumerate(reports) if r and not r.get("detections")]
-    shown = sorted(with_hits[: args.max_photos - 2] + clean[:2])
+    shown = set(pick_photos(reports, plan, args.max_photos))
     netmap = NetMap(int(run.grid.get("ui_sectors", 24)), int(run.grid.get("ui_wall_rows", 8)))
     photo_box = (th.px(28), th.px(HEADER_H) + th.px(70), th.px(1060), out.H - th.px(190))
     map_box = (th.px(1200), th.px(HEADER_H) + th.px(110), out.W - th.px(40), th.px(HEADER_H) + th.px(110) + th.px(330))
@@ -736,7 +767,7 @@ def main():
         if 2 in chapters:
             title_card(out, th, 1, "Classifier", ["Each photo is graded: holes, thin twine, fouling.",
                                                   "Every finding is placed on its area of the net."], 3)
-            netmap = classifier_chapter(out, th, sweep, args)
+            netmap = classifier_chapter(out, th, sweep, plan, args)
         else:
             for c in sweep.captures:
                 if sweep.vision.get(c["image"]):
