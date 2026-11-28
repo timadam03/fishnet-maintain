@@ -52,8 +52,8 @@ interface Props {
   labelFor: (f: Finding) => string;
   /** The camera turns to face this cell when it is on the far side. */
   focusCell: number | null;
-  /** A horizontal water slice inside the pen (oxygen, temperature), or null. */
-  slice: { depth: number; paint: (canvas: HTMLCanvasElement) => void } | null;
+  /** See-through horizontal water layers inside the pen (oxygen), each painted at its depth, or null. */
+  water: { depths: number[]; paint: (canvas: HTMLCanvasElement, depth: number) => void } | null;
 }
 
 const R = PEN_RADIUS_M;
@@ -90,9 +90,7 @@ interface SceneCtx {
   animate: (t: number) => void;
   /** Smoothly orbits the camera to an azimuth (theta) and/or polar angle (phi), in radians. */
   orbitTo: (to: { theta?: number; phi?: number }) => () => void;
-  sliceMesh: THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>;
-  sliceCanvas: HTMLCanvasElement;
-  sliceTexture: THREE.CanvasTexture;
+  waterGroup: THREE.Group;
   render: () => void;
 }
 
@@ -134,7 +132,7 @@ export default function Pen3D({
   onSelect,
   onSelectFinding,
   labelFor,
-  slice,
+  water,
   focusCell,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -236,18 +234,8 @@ export default function Pen3D({
     const droneGroup = new THREE.Group();
     scene.add(droneGroup);
 
-    const sliceCanvas = document.createElement('canvas');
-    sliceCanvas.width = 128;
-    sliceCanvas.height = 128;
-    const sliceTexture = new THREE.CanvasTexture(sliceCanvas);
-    sliceTexture.colorSpace = THREE.SRGBColorSpace;
-    const sliceMesh = new THREE.Mesh(
-      new THREE.CircleGeometry(1, 96),
-      new THREE.MeshBasicMaterial({ map: sliceTexture, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false }),
-    );
-    sliceMesh.rotation.x = -Math.PI / 2; // local +y becomes north (−z)
-    sliceMesh.visible = false;
-    scene.add(sliceMesh);
+    const waterGroup = new THREE.Group();
+    scene.add(waterGroup);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.target.copy(PEN_VIEW.target);
@@ -407,7 +395,7 @@ export default function Pen3D({
       return () => cancelAnimationFrame(raf);
     };
 
-    ctx.current = { scene, camera, controls, orbitTo, net, texture, textureCanvas, outline, markers, flowLines, flowPoints, droneGroup, animate, sliceMesh, sliceCanvas, sliceTexture, render };
+    ctx.current = { scene, camera, controls, orbitTo, net, texture, textureCanvas, outline, markers, flowLines, flowPoints, droneGroup, animate, waterGroup, render };
     resize();
 
     return () => {
@@ -426,7 +414,7 @@ export default function Pen3D({
         }
       });
       texture.dispose();
-      sliceTexture.dispose();
+      waterGroup.children.forEach((m) => ((m as THREE.Mesh).material as THREE.MeshBasicMaterial).map?.dispose());
       renderer.dispose();
       el.remove();
       ctx.current = null;
@@ -479,23 +467,32 @@ export default function Pen3D({
     c.render();
   }, [findings, holeIds]);
 
-  // Horizontal water slice at the chosen depth.
+  // Water layers inside the pen, one disc per depth, rebuilt when the data changes.
   useEffect(() => {
     const c = ctx.current;
     if (!c) return;
-    c.sliceMesh.visible = slice !== null;
-    // See-through net while a slice is shown, so the slice inside is visible.
-    c.net.material.opacity = slice ? 0.35 : NET_OPACITY;
-    c.net.material.needsUpdate = true;
-    if (slice) {
-      slice.paint(c.sliceCanvas);
-      c.sliceTexture.needsUpdate = true;
-      const r = radiusAt(slice.depth) * 0.985;
-      c.sliceMesh.scale.set(r, r, 1);
-      c.sliceMesh.position.y = -slice.depth;
+    for (const m of [...c.waterGroup.children] as THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>[]) {
+      m.geometry.dispose();
+      m.material.map?.dispose();
+      m.material.dispose();
+      c.waterGroup.remove(m);
+    }
+    // A lighter net while the water is shown, so the layers inside stay visible.
+    c.net.material.opacity = water ? 0.55 : NET_OPACITY;
+    for (const depth of water?.depths ?? []) {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 128;
+      water!.paint(canvas, depth);
+      const map = new THREE.CanvasTexture(canvas);
+      map.colorSpace = THREE.SRGBColorSpace;
+      const r = radiusAt(depth) * 0.985;
+      const disc = new THREE.Mesh(new THREE.CircleGeometry(r, 96), new THREE.MeshBasicMaterial({ map, transparent: true, side: THREE.DoubleSide, depthWrite: false }));
+      disc.rotation.x = -Math.PI / 2; // local +y becomes north (−z)
+      disc.position.y = -depth;
+      c.waterGroup.add(disc);
     }
     c.render();
-  }, [slice]);
+  }, [water]);
 
   // Turn the camera round the pen to face the focus cell, if it is on the far side.
   useEffect(() => {
@@ -507,13 +504,13 @@ export default function Pen3D({
     return afterReveal(() => c.orbitTo({ theta: Math.atan2(outward.x, outward.z) + 0.35 })); // slightly off-axis reads better
   }, [focusCell, afterReveal]);
 
-  // Looking down at a water slice is clearer than seeing it edge-on.
-  const hasSlice = slice !== null;
+  // Seen a little from above, the stacked water layers separate instead of lining up edge-on.
+  const hasWater = water !== null;
   useEffect(() => {
     const c = ctx.current;
     if (!c) return;
-    return afterReveal(() => c.orbitTo({ phi: hasSlice ? 0.85 : 1.48 }));
-  }, [hasSlice, afterReveal]);
+    return afterReveal(() => c.orbitTo({ phi: hasWater ? 1.12 : 1.48 }));
+  }, [hasWater, afterReveal]);
 
   // Current streamlines follow the day's direction.
   useEffect(() => {

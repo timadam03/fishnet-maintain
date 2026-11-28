@@ -157,7 +157,7 @@ export function SitePanel({ world, day, summaries, open, stormPeak, siteShare, r
       meta: `No images for ${day - CONE_DRONE_DOCKED_DAY} days while its drone is in repair.`,
       onClick: () => {
         dispatch({ type: 'cell', penIndex: 7, cell: cellIndex(WALL_ROWS, 0) });
-        dispatch({ type: 'layer', layer: 'coverage' });
+        dispatch({ type: 'layer', layer: 'risk' }); // stale areas are hatched on the risk layer
       },
     });
   }

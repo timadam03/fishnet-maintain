@@ -22,10 +22,10 @@ All data is **synthetic** (a seeded simulation), and the top bar says "Demo data
   a fine net-mesh texture.
   - Holes show as torn openings with a pulsing label.
   - When a pen opens, the camera turns to face the hole or the riskiest area.
-- **Layers, each with its own colour family:**
-  - The palette is "paper and ink", almost monochrome: colour appears only where hole risk is high
-    (coral to deep red), so danger stands out.
-  - Other layers use quiet grey, slate and sage ramps.
+- **Four layers: Hole risk, Wear, Fouling and Oxygen.**
+  - The palette is "paper and ink", almost monochrome: colour appears only where something needs
+    attention, in magma purples (high hole risk, low oxygen), so problems stand out.
+  - Wear and Fouling use quiet grey and sage ramps.
 - **The swarm.** 20 drones work inside the nets, two to four per pen (moving in live mode). Every pen
   keeps a crew, and spare drones go to the pens with the most urgent areas. Drones follow the decision
   layer's plan rules (`docs/contracts.md`): they sweep for coverage 4 m off the net, stalest and
@@ -38,9 +38,10 @@ All data is **synthetic** (a seeded simulation), and the top bar says "Demo data
   them at the day's current speed.
 - **Feed barge, swarm dock.** Drones docked for repair or charging rest in cradles on the barge's
   pontoon, next to the pens.
-- **Water inside the pen.** On the oxygen and temperature layers, a horizontal slice through the pen
-  at a depth you choose shows how values change across the pen, such as oxygen dropping where water
-  leaves the pen.
+- **Oxygen inside the pen.** On the Oxygen layer, see-through layers at 2, 6, 10, 14 and 18 m show the
+  water itself: clear where oxygen is fine (90 % and above), turning purple as it drops towards 60 %,
+  for example on the delousing day in Pen 3 (`#pen=3&day=70&layer=oxygen`). Temperature stays in the
+  side panel's depth chart.
 - **Charts in the side panel:**
   - net area at each risk level over time, as a stacked area, for the site and per pen;
   - water by depth over time, a depth × day heatmap for oxygen and temperature (the delousing drop and
@@ -73,7 +74,7 @@ All data is **synthetic** (a seeded simulation), and the top bar says "Demo data
 - **Today, Pen 6 (`#pen=6`):** a likely opening (76 %) seen once; two drones confirm it from either side (P1).
 - **Today, Pen 5 (`#pen=5`):** an unsure possible opening (55 %) gets a closer look (P2), next to a thin spot.
 - **Today, fouling and thin spots:** fouling patches the cleaner misses in Pens 1, 2, 4, 6 and 8 (olive growth on the net, and the Fouling
-  layer), thin twine in Pens 1, 3, 5 and 8 (Condition and Hole risk layers).
+  layer), thin twine in Pens 1, 3, 5 and 8 (Wear and Hole risk layers).
 - **History, Pen 4 (`#pen=4&cell=105&day=51`):** chafe from a weight rope was flagged at high risk and
   fixed before a twine broke.
 - **History, Pen 3 (`#pen=3&day=70&layer=oxygen`):** crowding for delousing dropped oxygen across the pen.

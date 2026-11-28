@@ -3,7 +3,7 @@ import { CELLS, TODAY, type Finding, type LayerId, type World } from '../data/mo
 import { riskScore } from '../data/risk';
 import type { Drone } from '../data/swarm';
 import { waterAtPoint } from '../data/water';
-import { LAYERS, computeLayerGrid, fitLayer, layerById, type LayerDef } from '../lib/layers';
+import { MAP_LAYERS, computeLayerGrid, fitLayer, layerById, oxygenDeficit, type LayerDef } from '../lib/layers';
 import { isConfirmedHole, statusAt, type Action, type PenViewMode, type Review } from '../lib/state';
 import { Legend } from './Legend';
 import { NetMap } from './NetMap';
@@ -17,7 +17,6 @@ interface Props {
   layerId: LayerId;
   cell: number | null;
   view: PenViewMode;
-  sliceDepth: number;
   findings: Finding[];
   reviews: Record<number, Review>;
   drones: Drone[];
@@ -39,34 +38,41 @@ function parseRgb(c: string): [number, number, number] {
   return [Number(m[0]), Number(m[1]), Number(m[2])];
 }
 
-/** Paints oxygen or temperature across a horizontal disc inside the pen (north up), in colour bands. */
-function paintSlice(canvas: HTMLCanvasElement, world: World, penId: number, depth: number, day: number, layer: LayerDef, measure: 'oxygen' | 'temperature'): void {
+/** Depths of the see-through oxygen layers inside the pen (m). */
+const OXYGEN_DEPTHS = [2, 6, 10, 14, 18];
+
+/**
+ * Paints oxygen across a horizontal disc inside the pen (north up). Water with plenty of oxygen is
+ * left almost clear; the lower the oxygen, the stronger the colour, so the layers stacked through the
+ * depth show where in the pen the water is poor without hiding the rest.
+ */
+function paintOxygenLayer(canvas: HTMLCanvasElement, world: World, penId: number, depth: number, day: number, layer: LayerDef): void {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   const n = canvas.width;
   const img = ctx.createImageData(n, n);
-  const bands = 14;
-  const span = layer.max - layer.min || 1;
   for (let py = 0; py < n; py++) {
     for (let px = 0; px < n; px++) {
       const x = ((px + 0.5) / n) * 2 - 1;
       const y = 1 - ((py + 0.5) / n) * 2;
-      if (x * x + y * y > 1) continue;
-      const v = waterAtPoint(world, penId, depth, x, y, day)[measure];
-      const t = Math.max(0, Math.min(1, (v - layer.min) / span));
-      const [r, g, b] = parseRgb(layer.color(layer.min + (Math.min(bands - 1, Math.floor(t * bands)) / (bands - 1)) * span));
+      const r2 = x * x + y * y;
+      if (r2 > 1) continue;
+      const v = waterAtPoint(world, penId, depth, x, y, day).oxygen;
+      const deficit = oxygenDeficit(v);
+      const [r, g, b] = parseRgb(layer.color(v));
       const at = (py * n + px) * 4;
       img.data[at] = r;
       img.data[at + 1] = g;
       img.data[at + 2] = b;
-      img.data[at + 3] = 255;
+      // Soft edge towards the net, so the layers read as water rather than discs.
+      img.data[at + 3] = Math.round(255 * (0.04 + 0.75 * deficit) * Math.min(1, (1 - r2) * 6));
     }
   }
   ctx.putImageData(img, 0, 0);
 }
 
-/** Pen level inside the one-view stage: layer chips, 3D or unrolled net, legend, and a depth slice for water layers. */
-export function PenView({ world, penIndex, day, layerId, cell, view, sliceDepth, findings, reviews, drones, selectedDrone, dispatch }: Props) {
+/** Pen level inside the one-view stage: layer chips, 3D or unrolled net, legend, and a oxygen layers inside the pen. */
+export function PenView({ world, penIndex, day, layerId, cell, view, findings, reviews, drones, selectedDrone, dispatch }: Props) {
   const penDrones = useMemo(() => drones.filter((d) => d.penIndex === penIndex), [drones, penIndex]);
   const selectDrone = useCallback((id: string): void => dispatch({ type: 'drone', id }), [dispatch]);
   const grid = useMemo(() => computeLayerGrid(world, penIndex, day, layerId), [world, penIndex, day, layerId]);
@@ -107,17 +113,17 @@ export function PenView({ world, penIndex, day, layerId, cell, view, sliceDepth,
   }, [penIndex]);
   const focusCell = cell ?? defaultFocus;
 
-  const water = layerId === 'oxygen' || layerId === 'temperature' ? layerId : null;
-  const slice = useMemo(() => {
-    if (!water || view !== '3d') return null;
-    return { depth: sliceDepth, paint: (canvas: HTMLCanvasElement) => paintSlice(canvas, world, pen.id, sliceDepth, day, layer, water) };
-  }, [water, view, sliceDepth, world, pen.id, day, layer]);
+  // Oxygen is about the water in the pen, so it is also shown as see-through layers through the depth.
+  const water = useMemo(() => {
+    if (layerId !== 'oxygen' || view !== '3d') return null;
+    return { depths: OXYGEN_DEPTHS, paint: (canvas: HTMLCanvasElement, depth: number) => paintOxygenLayer(canvas, world, pen.id, depth, day, layer) };
+  }, [layerId, view, world, pen.id, day, layer]);
 
   return (
     <div className="pen-stage">
       <div className="stage-controls top-left">
         <div className="segmented" role="group" aria-label="Map layer">
-          {LAYERS.map((l) => (
+          {MAP_LAYERS.map(layerById).map((l) => (
             <button key={l.id} data-text={l.label} aria-pressed={l.id === layerId} onClick={() => dispatch({ type: 'layer', layer: l.id })}>
               {l.label}
             </button>
@@ -154,7 +160,7 @@ export function PenView({ world, penIndex, day, layerId, cell, view, sliceDepth,
               onSelect={select}
               onSelectFinding={selectFinding}
               labelFor={labelFor}
-              slice={slice}
+              water={water}
               focusCell={focusCell}
             />
           </Suspense>
@@ -164,18 +170,6 @@ export function PenView({ world, penIndex, day, layerId, cell, view, sliceDepth,
           </div>
         )}
       </div>
-
-      {slice && (
-        <div className="stage-controls slice-control floating">
-          <label htmlFor="slice-depth">
-            {layer.label} slice at <b className="num">{sliceDepth}&nbsp;m</b>
-          </label>
-          <input id="slice-depth" type="range" min={1} max={28} value={sliceDepth} onChange={(e) => dispatch({ type: 'slice', depth: Number(e.target.value) })} />
-          <span className="note" style={{ margin: 0 }}>
-            Inside the pen, interpolated from sensors and drone readings.
-          </span>
-        </div>
-      )}
 
       <div className="stage-controls bottom-left">
         <Legend layer={layer} />

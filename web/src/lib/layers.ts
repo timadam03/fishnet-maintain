@@ -4,9 +4,9 @@
  * layer uses a single blue ramp, so warm colours always mean "risk".
  */
 import { CELLS, STALE_AFTER_DAYS, type LayerId, type PenSim, type World } from '../data/model';
-import { coverageAge, riskScore, windowSum } from '../data/risk';
+import { coverageAge, riskScore } from '../data/risk';
 import { waterAt } from '../data/water';
-import { waterRamp, color, ageRamp, damageRamp, riskStops, bioRamp } from './tokens';
+import { waterRamp, color, damageRamp, riskStops, bioRamp } from './tokens';
 
 export interface LayerDef {
   id: LayerId;
@@ -54,11 +54,8 @@ export function riskColor(score: number): string {
   return riskStops[riskStops.length - 1][1];
 }
 
-/** Light (low) to dark (high) on a given ramp; `invert` makes the low end darkest (e.g. low oxygen). */
-const scale = (stops: readonly string[], min: number, max: number, invert = false) => (v: number) => {
-  const t = (v - min) / (max - min);
-  return ramp([...stops], invert ? 1 - t : t);
-};
+/** Light (low) to dark (high) on a given ramp. */
+const scale = (stops: readonly string[], min: number, max: number) => (v: number) => ramp([...stops], (v - min) / (max - min));
 const waterScale = (min: number, max: number) => scale(waterRamp, min, max);
 
 const pct = (v: number): string => `${Math.round(v * 100)}%`;
@@ -120,8 +117,9 @@ export const LAYERS: LayerDef[] = [
     max: 100,
     hatchStale: false,
     format: (v) => `${Math.round(v)}%`,
-    // Low oxygen is the notable end, so it gets the brightest colour.
-    color: scale(waterRamp, 60, 100, true),
+    // Plenty of oxygen stays clear; low oxygen takes the same purples as hole risk, so a problem
+    // looks like a problem on every layer.
+    color: (v) => riskColor(oxygenDeficit(v)),
     legend: [
       { value: 60, label: '≤60%' },
       { value: 80, label: '80%' },
@@ -145,57 +143,20 @@ export const LAYERS: LayerDef[] = [
       { value: 15, label: '15°C' },
     ],
   },
-  {
-    id: 'contact',
-    label: 'Weight contact',
-    unit: 'h / 30 d',
-    source: 'Sonar + net simulation: hours touching sinker tube, chains or ropes',
-    min: 0,
-    max: 60,
-    hatchStale: false,
-    format: (v) => `${Math.round(v)} h`,
-    color: scale(damageRamp, 0, 60),
-    legend: [
-      { value: 0, label: '0 h' },
-      { value: 30, label: '30 h' },
-      { value: 60, label: '60 h+' },
-    ],
-  },
-  {
-    id: 'cleaning',
-    label: 'Cleaning',
-    unit: 'passes / 30 d',
-    source: 'Cleaning-rig logs',
-    min: 0,
-    max: 14,
-    hatchStale: false,
-    format: (v) => `${Math.round(v)} passes`,
-    color: scale(damageRamp, 0, 14),
-    legend: [
-      { value: 0, label: '0' },
-      { value: 7, label: '7' },
-      { value: 14, label: '14+' },
-    ],
-  },
-  {
-    id: 'coverage',
-    label: 'Last seen',
-    unit: 'days ago',
-    source: 'Swarm inspection log',
-    min: 0,
-    max: STALE_AFTER_DAYS,
-    hatchStale: true,
-    format: (v) => `${Math.round(v)} d ago`,
-    color: scale(ageRamp, 0, STALE_AFTER_DAYS),
-    legend: [
-      { value: 0, label: 'Today' },
-      { value: 7, label: '7 d' },
-      { value: STALE_AFTER_DAYS, label: `${STALE_AFTER_DAYS} d+ (hatched)` },
-    ],
-  },
 ];
 
 export const layerById = (id: LayerId): LayerDef => LAYERS.find((l) => l.id === id) ?? LAYERS[0];
+
+/**
+ * How short of oxygen the water is: 0 at 90 % saturation and above (fine for salmon), 1 at 60 % and
+ * below (critical). Illustrative thresholds, not farm limits.
+ */
+export function oxygenDeficit(saturation: number): number {
+  return Math.max(0, Math.min(1, (90 - saturation) / 30));
+}
+
+/** The layers offered on the map, in order. */
+export const MAP_LAYERS: LayerId[] = ['risk', 'condition', 'fouling', 'oxygen'];
 
 /** For `fitToData` layers: the same layer with its scale and legend fitted to the values in `grid`. */
 export function fitLayer(layer: LayerDef, values: Float32Array): LayerDef {
@@ -253,15 +214,6 @@ export function computeLayerGrid(world: World, penIndex: number, day: number, la
         break;
       case 'temperature':
         values[c] = waterAt(world, penId, c, day).temperature;
-        break;
-      case 'contact':
-        values[c] = windowSum(sim.contactCum, day, c, 30);
-        break;
-      case 'cleaning':
-        values[c] = windowSum(sim.cleaningCum, day, c, 30);
-        break;
-      case 'coverage':
-        values[c] = age === null ? NaN : age;
         break;
     }
   }

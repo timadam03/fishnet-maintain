@@ -1,6 +1,6 @@
 /** UI state: where the operator is in the Site › Pen › Cell › Finding hierarchy, the time and the active layer. */
 import { CELLS, DAYS, TODAY, type Finding, type FindingStatus, type LayerId, type World } from '../data/model';
-import { LAYERS } from './layers';
+import { MAP_LAYERS } from './layers';
 
 export type Review = 'confirmed' | 'rejected';
 export type PenViewMode = '3d' | 'unrolled';
@@ -15,8 +15,6 @@ export interface UiState {
   layer: LayerId;
   playing: boolean;
   view: PenViewMode;
-  /** Depth of the horizontal water slice shown inside the 3D pen for oxygen and temperature. */
-  sliceDepth: number;
   /** Operator decisions made in this session (review of unreviewed findings). */
   reviews: Record<number, Review>;
 }
@@ -30,7 +28,6 @@ export const initialState: UiState = {
   layer: 'risk',
   playing: false,
   view: '3d',
-  sliceDepth: 10,
   reviews: {},
 };
 
@@ -45,7 +42,6 @@ export type Action =
   | { type: 'layer'; layer: LayerId }
   | { type: 'play'; playing: boolean }
   | { type: 'view'; view: PenViewMode }
-  | { type: 'slice'; depth: number }
   | { type: 'review'; findingId: number; review: Review }
   | { type: 'restore'; location: ViewLocation };
 
@@ -77,7 +73,7 @@ export function fromHash(hash: string, penCount: number): ViewLocation {
     return p.has(k) && Number.isInteger(v) && v >= min && v <= max ? v : null;
   };
   const pen = int('pen', 1, penCount);
-  const layer = LAYERS.find((l) => l.id === p.get('layer'))?.id ?? 'risk';
+  const layer = MAP_LAYERS.find((id) => id === p.get('layer')) ?? 'risk';
   return {
     penIndex: pen === null ? null : pen - 1,
     cell: pen === null ? null : int('cell', 0, CELLS - 1),
@@ -115,8 +111,6 @@ export function reducer(state: UiState, action: Action): UiState {
       return { ...state, playing: action.playing, day: action.playing && state.day >= TODAY ? 0 : state.day };
     case 'view':
       return { ...state, view: action.view };
-    case 'slice':
-      return { ...state, sliceDepth: Math.max(1, Math.min(28, action.depth)) };
     case 'review':
       return { ...state, reviews: { ...state.reviews, [action.findingId]: action.review } };
     case 'restore':

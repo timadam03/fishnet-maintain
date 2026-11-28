@@ -68,7 +68,6 @@ export const color: Palette = {
 export const waterRamp = ['#f1f1ef', '#e0e3e4', '#cdd3d6', '#b4bcc0', '#98a3a9', '#7b878e', '#5c6970', '#434e55', '#2b3439'];
 export const damageRamp = ['#f1f1ef', '#dcdbd8', '#c2c1bd', '#a5a4a0', '#878682', '#6a6966', '#4d4c4a', '#2f2f2d'];
 export const bioRamp = ['#f1f2ef', '#dde1d8', '#c3cabb', '#a6b09c', '#89957f', '#6d7a64', '#53604c'];
-export const ageRamp = ['#f4f4f2', '#e3e3e0', '#cbcbc7', '#aeada9', '#8f8e8a', '#706f6b'];
 /** Hole risk as a continuous scale of [score, colour] stops; levels at 0.25 / 0.5 / 0.7. */
 export const riskStops: Array<[number, string]> = [
   [0, '#f3f2f1'],

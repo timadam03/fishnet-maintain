@@ -32,7 +32,8 @@ export const DELOUSING_PEN_IDS = [3, 4];
 /** Coverage older than this is shown as stale (hatched), never as a colour. */
 export const STALE_AFTER_DAYS = 14;
 
-export type LayerId = 'risk' | 'condition' | 'fouling' | 'oxygen' | 'temperature' | 'contact' | 'cleaning' | 'coverage';
+/** Data layers. `temperature` only feeds the sidebar's depth chart; the map offers `MAP_LAYERS` (lib/layers.ts). */
+export type LayerId = 'risk' | 'condition' | 'fouling' | 'oxygen' | 'temperature';
 
 export const cellIndex = (row: number, col: number): number => row * ANGLE_SECTORS + col;
 export const cellRow = (cell: number): number => Math.floor(cell / ANGLE_SECTORS);

@@ -144,7 +144,6 @@ export default function App() {
             layerId={layer}
             cell={cell}
             view={state.view}
-            sliceDepth={state.sliceDepth}
             findings={penOpen}
             reviews={reviews}
             drones={drones}
