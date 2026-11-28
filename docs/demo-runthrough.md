@@ -25,6 +25,15 @@ Five chapters, each opening with a title card. A strip at the top (SWEEP > DETEC
 - **Photos shown there:** first, for each plan target, the sweep photo with the strongest detection on that target's cell. Then other photos with detections, spread over the run, and two where nothing was found. All photos still fill the net map, shown or not.
 - **Which target a ROV is heading to:** the `target_id` of that ROV's next photo. The photo records and the telemetry share the sim clock (`fishfarm_demo.py`, `t = sim_t[0]`).
 
+### Two loop videos
+
+A loop run with `-Record` can produce two whole-loop videos in the loop folder. They come from the same outputs:
+
+| File | Made by | When | What it is |
+|---|---|---|---|
+| `abyss_loop_<grader>.mp4` | `tools/make_loop_video.py` | Always with `-Record` | The two rendered run videos joined with text cards: detector counts, plan table, mission results, score |
+| `runthrough_<grader>.mp4` | `tools/make_runthrough.py` (this guide) | With `-Runthrough`, or run by hand | The animated version: the classifier processing each photo, the net map filling in, targets appearing with their reasons, ROVs linked to their targets, close-ups per target |
+
 ## 2. Requirements
 
 - **Software:** Python with numpy and Pillow (Isaac Sim's own `python.bat` has both), and ffmpeg. The script uses `ffmpeg` on `PATH`, or `imageio-ffmpeg` (`python.bat -m pip install imageio-ffmpeg`), the same as `make_video.py`. OpenCV is not needed.
