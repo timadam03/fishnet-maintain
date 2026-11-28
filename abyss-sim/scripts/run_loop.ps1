@@ -140,7 +140,7 @@ if ($plan.targets.Count -eq 0) {
 
 # ------------------------------------------------------------------ 4. act
 Step "4/6 act: the ROVs fly the plan ($($plan.targets.Count) targets)"
-Run-Sim "plan" $PlanRun @("--plan", $PlanFile)
+Run-Sim "plan_$Grader" $PlanRun @("--plan", $PlanFile)
 
 # ------------------------------------------------------------------ 5. learn
 Step "5/6 learn: detect the close-ups and close the missions"
@@ -166,4 +166,4 @@ foreach ($run in @($Sweep, $PlanRun)) {
 }
 Write-Host "Plan:      $PlanFile"
 Write-Host "Overlays:  $(Join-Path $Sweep 'overlays')  and  $(Join-Path $PlanRun 'overlays')"
-if ($Record) { Write-Host "Videos:    $Out\rec_sweep, $Out\rec_plan" }
+if ($Record) { Write-Host "Videos:    $Out\rec_sweep, $Out\rec_plan_$Grader (the .mp4 files in each)" }
