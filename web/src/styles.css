@@ -719,8 +719,9 @@ h3 {
   z-index: 1;
   /* Fjord water, the same tones as the site view (environment.waterFar and environment.water). */
   background: linear-gradient(180deg, #a6bcc1 0%, #8ea7b0 60%);
-  /* Appears as the site camera arrives inside the pen. */
-  animation: stage-in 420ms var(--ease-out) 650ms both;
+  /* Fades in over the site scene as its camera arrives at the pen view's starting point; the two
+     frames match by then (src/lib/penView.ts), so this reads as one continuous view. */
+  animation: stage-in var(--handoff-ms) ease-in-out calc(var(--fly-ms) * 0.94) both;
 }
 
 @keyframes stage-in {
@@ -732,14 +733,33 @@ h3 {
 .site3d {
   position: absolute;
   inset: 0;
-  transition: opacity 300ms var(--ease-out);
 }
 
-/* Zoomed into a pen: the site scene hands over to the pen view once the camera has arrived. */
+/* Fjord water behind the scene, faded in during the flight so the background is already the pen
+   view's when it takes over. */
+.site3d::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, #a6bcc1 0%, #8ea7b0 60%);
+  opacity: 0;
+  transition: opacity var(--fly-ms) ease-in-out;
+}
+
+.site3d.focused::before {
+  opacity: 1;
+}
+
+.site3d > canvas {
+  position: relative;
+}
+
+/* Zoomed into a pen: the site scene stays fully visible under the pen view while it fades in, and is
+   hidden only once the pen view covers it. Coming back out, it shows again at once. */
 .site3d.focused {
   opacity: 0;
   pointer-events: none;
-  transition-delay: 750ms;
+  transition: opacity 0s linear calc(var(--fly-ms) * 0.94 + var(--handoff-ms));
 }
 
 .stage-canvas {

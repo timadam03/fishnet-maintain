@@ -1,4 +1,5 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useReducer, useRef, type CSSProperties } from 'react';
+import { FLY_MS, HANDOFF_MS } from './lib/transition';
 import { environment } from './lib/environment';
 import { DAYS, STORM_FORECAST_DAY, TODAY, cellLabel, type World } from './data/model';
 import { generateWorld } from './data/simulate';
@@ -14,6 +15,8 @@ import { riskShareSeries, summarisePen, topRiskAreas } from './lib/summary';
 import { color } from './lib/tokens';
 
 const SiteScene3D = lazy(() => import('./components/SiteScene3D'));
+/** Loads the pen view's 3D code early, so the first flight into a pen never waits on it. */
+const preloadPen3D = (): void => void import('./components/Pen3D').catch((error: unknown) => console.error('Could not preload the pen view', error));
 
 const world: World = generateWorld();
 const stormSummaries = world.pens.map((_, i) => summarisePen(world, i, STORM_FORECAST_DAY));
@@ -42,6 +45,11 @@ export default function App() {
   // Keep the view in the URL: moving between levels adds a history entry (so Back works); time and layer replace it.
   // Browsers limit how often history can be written (Safari throws), so day changes from scrubbing are debounced.
   const lastLevel = useRef(`${penIndex}/${cell}/${findingId}`);
+  useEffect(() => {
+    const timer = window.setTimeout(preloadPen3D, 1200);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   useEffect(() => {
     if (playing) return;
     const level = `${penIndex}/${cell}/${findingId}`;
@@ -120,7 +128,10 @@ export default function App() {
 
   return (
     <div className="app">
-      <main className="stage" style={{ background: `linear-gradient(180deg, ${environment.sky} 0%, ${environment.haze} 55%)` }}>
+      <main
+        className="stage"
+        style={{ background: `linear-gradient(180deg, ${environment.sky} 0%, ${environment.haze} 55%)`, '--fly-ms': `${FLY_MS}ms`, '--handoff-ms': `${HANDOFF_MS}ms` } as CSSProperties}
+      >
         <Suspense fallback={<p className="stage-hint">Loading 3D site…</p>}>
           <SiteScene3D world={world} day={day} live={day === TODAY} holes={holes} openings={openings} drones={drones} focusPen={penIndex} penRisk={penRisk} onOpenPen={openPen} onSelectDrone={selectDrone} />
         </Suspense>

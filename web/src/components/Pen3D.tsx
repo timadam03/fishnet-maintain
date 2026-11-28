@@ -4,16 +4,14 @@
  * Renders only when something changes (no animation loop) and is loaded lazily, so the farm view
  * never pays for three.js.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
   ANGLE_SECTORS,
-  CONE_TIP_M,
   PEN_RADIUS_M,
   ROWS,
   SECTOR_DEG,
-  WALL_DEPTH_M,
   WALL_ROWS,
   cellCol,
   cellIndex,
@@ -27,6 +25,7 @@ import { NET_OPACITY, environment } from '../lib/environment';
 import { paintNetTexture } from '../lib/heat';
 import { ROBOT_RENDER_ORDER, robotGeometry, robotMaterial } from '../lib/robotModel';
 import { buildNetGeometry, netPoint, radiusAt } from '../lib/netGeometry';
+import { FLY_MS, HANDOFF_MS, PEN_DRONE_SCALE, PEN_FOG, PEN_LIGHT, PEN_VIEW, buildRigging, dronePosition, faceAlongNet, penViewOffset, sceneClock } from '../lib/penView';
 import type { LayerDef, LayerGrid } from '../lib/layers';
 import { color } from '../lib/tokens';
 
@@ -58,6 +57,7 @@ interface Props {
 }
 
 const R = PEN_RADIUS_M;
+const ORIGIN = new THREE.Vector3();
 
 function cellOutline(cell: number): THREE.Vector3[] {
   const [d0, d1] = rowDepth(cellRow(cell));
@@ -72,39 +72,6 @@ function cellOutline(cell: number): THREE.Vector3[] {
 function cellCentre(cell: number, scale = 1.02): THREE.Vector3 {
   const [d0, d1] = rowDepth(cellRow(cell));
   return netPoint((d0 + d1) / 2, cellCol(cell) * SECTOR_DEG + SECTOR_DEG / 2, scale);
-}
-
-function buildRigging(scene: THREE.Scene): void {
-  const steel = new THREE.MeshLambertMaterial({ color: environment.collar }); // HDPE floating collar
-  for (const radius of [R + 0.6, R + 2.0]) {
-    const torus = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.45, 8, 96), steel);
-    torus.rotation.x = Math.PI / 2;
-    torus.position.y = 0.3;
-    scene.add(torus);
-  }
-  const sinker = new THREE.Mesh(new THREE.TorusGeometry(R + 1.2, 0.55, 8, 96), new THREE.MeshLambertMaterial({ color: color.ink3 }));
-  sinker.rotation.x = Math.PI / 2;
-  sinker.position.y = -(WALL_DEPTH_M + 1.5);
-  scene.add(sinker);
-
-  const chainPts: THREE.Vector3[] = [];
-  for (let a = 0; a < 360; a += 45) {
-    const top = netPoint(0, a, (R + 1.2) / R);
-    chainPts.push(top, top.clone().setY(-(WALL_DEPTH_M + 1.5)));
-  }
-  scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(chainPts), new THREE.LineBasicMaterial({ color: color.ink3 })));
-
-  const moorPts: THREE.Vector3[] = [];
-  for (const a of [45, 135, 225, 315]) {
-    const end = netPoint(0, a, (R + 45) / R);
-    end.y = -38;
-    moorPts.push(netPoint(0, a, (R + 2) / R), end);
-  }
-  scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(moorPts), new THREE.LineBasicMaterial({ color: color.coast, transparent: true, opacity: 0.6 })));
-
-  const weight = new THREE.Mesh(new THREE.SphereGeometry(0.9, 12, 12), new THREE.MeshLambertMaterial({ color: color.ink3 }));
-  weight.position.y = -CONE_TIP_M - 0.8;
-  scene.add(weight);
 }
 
 interface SceneCtx {
@@ -151,19 +118,6 @@ function flowPaths(dirDeg: number): THREE.Vector3[][] {
 
 const PARTICLES_PER_PATH = 4;
 
-/**
- * A drone's position: inside the net at its task depth and standoff. Sweeping drones move along
- * either side of their area; targeted ones hold at their viewpoint, and a two-angle look (P4) swings
- * between its two angles.
- */
-function dronePosition(d: Drone, t: number, k: number): THREE.Vector3 {
-  if (d.cell === null) return new THREE.Vector3(0, 2, -(R + 30));
-  const base = cellCol(d.cell) * SECTOR_DEG + SECTOR_DEG / 2 + d.viewDeg;
-  const sweep = d.status === 'sampling' ? 40 * Math.sin(t / 9 + k) : d.rule === 'sweep' ? 9 * Math.sin(t / 3 + k) : d.rule === 'P4' ? 8 * Math.sin(t / 4 + k) : 1.2 * Math.sin(t / 2 + k);
-  const depth = d.depth + (d.status === 'sampling' ? 3 * Math.sin(t / 5 + k) : 0);
-  return netPoint(Math.min(depth, WALL_DEPTH_M), base + sweep, 1 - Math.max(1, d.standoffM) / R);
-}
-
 export default function Pen3D({
   grid,
   layer,
@@ -197,7 +151,20 @@ export default function Pen3D({
   const onSelectDroneRef = useRef(onSelectDrone);
   onSelectDroneRef.current = onSelectDrone;
   const droneLabelsRef = useRef<HTMLDivElement>(null);
-  const timeRef = useRef(0);
+  const timeRef = useRef(sceneClock());
+  // Camera turns wait until the pen view has faded in over the site, so they play on screen instead
+  // of putting the view at a different angle from the one the site camera arrived at.
+  const revealAt = useRef(performance.now() + FLY_MS + HANDOFF_MS);
+  const afterReveal = useCallback((turn: () => () => void): (() => void) => {
+    const wait = revealAt.current - performance.now();
+    if (wait <= 0) return turn();
+    let cancel = (): void => {};
+    const timer = window.setTimeout(() => (cancel = turn()), wait);
+    return () => {
+      window.clearTimeout(timer);
+      cancel();
+    };
+  }, []);
   const setFlowRef = useRef<((dirDeg: number) => void) | null>(null);
   const [hover, setHover] = useState<{ cell: number; x: number; y: number } | null>(null);
 
@@ -211,13 +178,14 @@ export default function Pen3D({
     wrap.prepend(renderer.domElement);
 
     const scene = new THREE.Scene();
-    scene.add(new THREE.AmbientLight(0xffffff, 1.9));
-    const sun = new THREE.DirectionalLight(0xffffff, 0.9);
-    sun.position.set(30, 60, 40);
+    scene.add(new THREE.AmbientLight(0xffffff, PEN_LIGHT.ambient));
+    const sun = new THREE.DirectionalLight(0xffffff, PEN_LIGHT.sun);
+    sun.position.copy(PEN_LIGHT.sunPosition);
     scene.add(sun);
 
-    const camera = new THREE.PerspectiveCamera(36, 1, 1, 1000);
-    camera.position.set(85, -6, 95);
+    // Starts exactly where the site camera's flight into the pen ends.
+    const camera = new THREE.PerspectiveCamera(PEN_VIEW.fov, 1, 1, 1000);
+    camera.position.copy(PEN_VIEW.target).add(PEN_VIEW.offset);
 
     const textureCanvas = document.createElement('canvas');
     textureCanvas.width = 1536;
@@ -233,11 +201,11 @@ export default function Pen3D({
       new THREE.MeshLambertMaterial({ map: texture, side: THREE.DoubleSide, transparent: true, opacity: NET_OPACITY, depthWrite: false }),
     );
     scene.add(net);
-    buildRigging(scene);
+    scene.add(buildRigging());
 
     // Fjord surroundings in the same water colours as the site view: the seabed fades into the water,
     // under a faint surface.
-    scene.fog = new THREE.Fog(environment.water, 160, 420);
+    scene.fog = new THREE.Fog(PEN_FOG.color, PEN_FOG.near, PEN_FOG.far);
     const seabed = new THREE.Mesh(new THREE.CircleGeometry(260, 64), new THREE.MeshLambertMaterial({ color: environment.seabed }));
     seabed.rotation.x = -Math.PI / 2;
     seabed.position.y = -46;
@@ -282,7 +250,7 @@ export default function Pen3D({
     scene.add(sliceMesh);
 
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(0, -15, 0);
+    controls.target.copy(PEN_VIEW.target);
     controls.minDistance = 40;
     controls.maxDistance = 320;
     controls.update();
@@ -316,9 +284,7 @@ export default function Pen3D({
         if (!m) return;
         const p = dronePosition(d, t, k);
         m.position.copy(p);
-        // Face along the net (tangent to the pen), the way it sweeps.
-        const a = Math.atan2(p.x, -p.z);
-        m.lookAt(p.x + Math.cos(a), p.y, p.z + Math.sin(a));
+        faceAlongNet(m, p, ORIGIN);
       });
       const pos = flowPoints.geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
       if (pos && paths.length) {
@@ -357,18 +323,15 @@ export default function Pen3D({
     };
     controls.addEventListener('change', render);
 
-    // Keep the whole pen (about 75 m across with the moorings) in view in narrow stages,
-    // without changing the angle the user (or a focus turn) left the camera at.
-    const baseDistance = camera.position.distanceTo(controls.target);
+    // Keep the whole pen in view in narrow stages, without changing the angle the user (or a focus
+    // turn) left the camera at. Same distance as the end of the site camera's flight.
     const resize = (): void => {
       const { clientWidth: w, clientHeight: h } = wrap;
       if (!w || !h) return;
       renderer.setSize(w, h);
       camera.aspect = w / h;
-      const halfFovH = Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect);
-      const needed = (R + 12) / Math.tan(halfFovH);
       const offset = camera.position.clone().sub(controls.target);
-      camera.position.copy(controls.target).add(offset.setLength(Math.max(baseDistance, needed)));
+      camera.position.copy(controls.target).add(offset.setLength(penViewOffset(camera.aspect).length()));
       camera.updateProjectionMatrix();
       controls.update();
       render();
@@ -541,16 +504,16 @@ export default function Pen3D({
     const outward = cellCentre(focusCell, 1).setY(0).normalize();
     const facing = c.camera.position.clone().sub(c.controls.target).setY(0).normalize().dot(outward);
     if (facing > 0.45) return;
-    return c.orbitTo({ theta: Math.atan2(outward.x, outward.z) + 0.35 }); // slightly off-axis reads better
-  }, [focusCell]);
+    return afterReveal(() => c.orbitTo({ theta: Math.atan2(outward.x, outward.z) + 0.35 })); // slightly off-axis reads better
+  }, [focusCell, afterReveal]);
 
   // Looking down at a water slice is clearer than seeing it edge-on.
   const hasSlice = slice !== null;
   useEffect(() => {
     const c = ctx.current;
     if (!c) return;
-    return c.orbitTo({ phi: hasSlice ? 0.85 : 1.48 });
-  }, [hasSlice]);
+    return afterReveal(() => c.orbitTo({ phi: hasSlice ? 0.85 : 1.48 }));
+  }, [hasSlice, afterReveal]);
 
   // Current streamlines follow the day's direction.
   useEffect(() => {
@@ -580,7 +543,7 @@ export default function Pen3D({
       const body = new THREE.Mesh(robotGeometry, robotMaterial);
       body.userData.shared = true;
       body.renderOrder = ROBOT_RENDER_ORDER;
-      body.scale.setScalar(4.5);
+      body.scale.setScalar(PEN_DRONE_SCALE);
       g.add(body);
       if (d.id === selectedDrone) {
         const ring = new THREE.Mesh(new THREE.TorusGeometry(3, 0.12, 8, 32), new THREE.MeshBasicMaterial({ color: color.signal }));
@@ -598,11 +561,10 @@ export default function Pen3D({
     if (!c || !live || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     let raf = 0;
     let last = 0;
-    const start = performance.now() - timeRef.current * 1000;
     const tick = (now: number): void => {
       if (now - last > 33) {
         last = now;
-        c.animate((now - start) / 1000);
+        c.animate(sceneClock(now));
       }
       raf = requestAnimationFrame(tick);
     };

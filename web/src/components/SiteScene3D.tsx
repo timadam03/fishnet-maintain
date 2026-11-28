@@ -13,6 +13,7 @@ import { computeLayerGrid, layerById } from '../lib/layers';
 import { buildNetGeometry, netPoint } from '../lib/netGeometry';
 import { ROBOT_RENDER_ORDER, robotGeometry, robotMaterial } from '../lib/robotModel';
 import { NET_OPACITY, environment as env } from '../lib/environment';
+import { FLY_MS, PEN_DRONE_SCALE, PEN_FOG, PEN_LIGHT, PEN_VIEW, buildRigging, dronePosition, faceAlongNet, penViewOffset, sceneClock } from '../lib/penView';
 import { TERRAIN, heightAt, paintTerrain } from '../lib/terrain';
 import { color } from '../lib/tokens';
 
@@ -35,8 +36,15 @@ interface Props {
 
 /** Overview camera, and the camera offset the pen view starts from (so the hand-over is seamless). */
 const OVERVIEW = { position: new THREE.Vector3(60, 470, 780), target: new THREE.Vector3(0, -15, -20) };
-const PEN_OFFSET = new THREE.Vector3(85, 9, 95);
-const PEN_TARGET = new THREE.Vector3(0, -15, 0);
+/** 0 below `a`, 1 above `b`, smooth in between. */
+const smooth = (a: number, b: number, x: number): number => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+const OVERVIEW_FOV = 34;
+const SITE_DRONE_SCALE = 8;
+const SITE_LIGHT = { ambient: 1.8, sun: 1, sunPosition: new THREE.Vector3(-120, 260, 160) };
+const SITE_FOG = { color: env.haze, near: 1400, far: 4800 };
 
 const R = PEN_RADIUS_M;
 /** Feed barge position (waterline) and the cradle positions along its swarm-dock pontoon. */
@@ -57,6 +65,8 @@ interface SceneCtx {
   animate: (t: number) => void;
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
+  /** How far the view has blended into a pen (0 site, 1 pen view): drones, light and fog follow it. */
+  setFocus: (pen: number | null, k: number) => void;
 }
 
 export default function SiteScene3D({ world, day, live, holes, openings, drones, focusPen, penRisk, onOpenPen, onSelectDrone }: Props) {
@@ -67,7 +77,10 @@ export default function SiteScene3D({ world, day, live, holes, openings, drones,
   dronesRef.current = drones;
   const handlers = useRef({ onOpenPen, onSelectDrone });
   handlers.current = { onOpenPen, onSelectDrone };
-  const timeRef = useRef(0);
+  const timeRef = useRef(sceneClock());
+  // Progress of the flight into a pen (0 site, 1 pen view), and the pen it last flew into.
+  const focusK = useRef(0);
+  const lastFocus = useRef<number | null>(null);
   const compassRef = useRef<HTMLDivElement>(null);
   const bargeLabelRef = useRef<HTMLSpanElement>(null);
   const [hoverPen, setHoverPen] = useState<number | null>(null);
@@ -82,14 +95,16 @@ export default function SiteScene3D({ world, day, live, holes, openings, drones,
 
     const scene = new THREE.Scene();
     // Gentle haze far away, tinted like the sky, so the land fades out instead of turning to dust.
-    scene.fog = new THREE.Fog(env.haze, 1400, 4800);
+    const fog = new THREE.Fog(SITE_FOG.color, SITE_FOG.near, SITE_FOG.far);
+    scene.fog = fog;
     scene.background = null;
-    scene.add(new THREE.AmbientLight(0xffffff, 1.8));
-    const sun = new THREE.DirectionalLight(0xffffff, 1);
-    sun.position.set(-120, 260, 160);
+    const ambient = new THREE.AmbientLight(0xffffff, SITE_LIGHT.ambient);
+    scene.add(ambient);
+    const sun = new THREE.DirectionalLight(0xffffff, SITE_LIGHT.sun);
+    sun.position.copy(SITE_LIGHT.sunPosition);
     scene.add(sun);
 
-    const camera = new THREE.PerspectiveCamera(34, 1, 1, 9000);
+    const camera = new THREE.PerspectiveCamera(OVERVIEW_FOV, 1, 1, 9000);
     camera.position.copy(OVERVIEW.position);
 
     // Surroundings: shore, headland, island and seabed, painted like a sea chart.
@@ -122,6 +137,12 @@ export default function SiteScene3D({ world, day, live, holes, openings, drones,
     const textures: SceneCtx['textures'] = [];
     const nets: THREE.Mesh[] = [];
     const collars: SceneCtx['collars'] = [];
+    // Everything that belongs to one pen (or to the barge, -1), faded out while flying into another pen.
+    const fadeGroups = new Map<number, THREE.Object3D[]>();
+    const addFade = (key: number, o: THREE.Object3D): void => void fadeGroups.set(key, [...(fadeGroups.get(key) ?? []), o]);
+    // The surroundings too (-2): inside a pen the view is open water, as in the pen view.
+    addFade(-2, terrain);
+    addFade(-2, surface);
     world.pens.forEach((_, i) => {
       const pos = penPosition(world, i);
       const canvas = document.createElement('canvas');
@@ -138,11 +159,13 @@ export default function SiteScene3D({ world, day, live, holes, openings, drones,
       net.userData.penIndex = i;
       scene.add(net);
       nets.push(net);
-      const collar = new THREE.Mesh(new THREE.TorusGeometry(R + 1.5, 0.9, 8, 72), new THREE.MeshLambertMaterial({ color: env.collar }));
-      collar.rotation.x = Math.PI / 2;
-      collar.position.copy(pos).setY(0.6);
-      scene.add(collar);
-      collars.push(collar);
+      addFade(i, net);
+      // The same collar, sinker tube, chains and moorings as in the pen view, so nothing pops in.
+      const rigging = buildRigging();
+      rigging.position.copy(pos);
+      scene.add(rigging);
+      addFade(i, rigging);
+      collars.push(rigging.children[0] as SceneCtx['collars'][number]);
       const frame = new THREE.LineSegments(
         new THREE.EdgesGeometry(new THREE.PlaneGeometry(2 * R + 44, 2 * R + 44)),
         new THREE.LineBasicMaterial({ color: color.ink, transparent: true, opacity: 0.15 }),
@@ -150,6 +173,7 @@ export default function SiteScene3D({ world, day, live, holes, openings, drones,
       frame.rotation.x = -Math.PI / 2;
       frame.position.copy(pos).setY(0.2);
       scene.add(frame);
+      addFade(i, frame);
     });
 
     // Feed barge with the swarm dock: a hull with deckhouse and feed silos, and a pontoon on the pen
@@ -183,6 +207,19 @@ export default function SiteScene3D({ world, day, live, holes, openings, drones,
     });
     bargeGroup.position.copy(BARGE);
     scene.add(bargeGroup);
+    addFade(-1, bargeGroup);
+    // Remember each material's own opacity, so fading can scale it and restore it.
+    const fadeMaterials = new Map<number, Array<{ material: THREE.Material; opacity: number; transparent: boolean }>>();
+    fadeGroups.forEach((objects, key) => {
+      const list: Array<{ material: THREE.Material; opacity: number; transparent: boolean }> = [];
+      for (const o of objects) {
+        o.traverse((x) => {
+          const m = (x as THREE.Mesh).material as THREE.Material | undefined;
+          if (m && !list.some((e) => e.material === m)) list.push({ material: m, opacity: m.opacity, transparent: m.transparent });
+        });
+      }
+      fadeMaterials.set(key, list);
+    });
 
     const droneGroup = new THREE.Group();
     scene.add(droneGroup);
@@ -221,16 +258,48 @@ export default function SiteScene3D({ world, day, live, holes, openings, drones,
     };
     controls.addEventListener('change', render);
 
+    const focus = { pen: null as number | null, k: 0 };
+    const penFog = new THREE.Color(PEN_FOG.color);
+    const siteFog = new THREE.Color(SITE_FOG.color);
+    const setFocus = (pen: number | null, k: number): void => {
+      focus.pen = pen;
+      focus.k = k;
+      // Light and fog move to the pen view's, so the two frames match at the hand-over.
+      ambient.intensity = SITE_LIGHT.ambient + (PEN_LIGHT.ambient - SITE_LIGHT.ambient) * k;
+      sun.intensity = SITE_LIGHT.sun + (PEN_LIGHT.sun - SITE_LIGHT.sun) * k;
+      sun.position.lerpVectors(SITE_LIGHT.sunPosition, PEN_LIGHT.sunPosition, k);
+      fog.color.copy(siteFog).lerp(penFog, k);
+      fog.near = SITE_FOG.near + (PEN_FOG.near - SITE_FOG.near) * k;
+      fog.far = SITE_FOG.far + (PEN_FOG.far - SITE_FOG.far) * k;
+      camera.fov = OVERVIEW_FOV + (PEN_VIEW.fov - OVERVIEW_FOV) * k;
+      camera.updateProjectionMatrix();
+      // The pen view shows one pen alone: the others and the barge fade away on the way in.
+      fadeMaterials.forEach((list, key) => {
+        // Neighbouring pens and the barge go during the descent; land and seabed only at the end,
+        // once the camera is under water, so they never look like a see-through ghost from above.
+        const keep = pen === null || key === pen ? 1 : 1 - (key === -2 ? smooth(0.6, 1, k) : smooth(0.2, 0.85, k));
+        for (const e of list) {
+          e.material.transparent = e.transparent || keep < 1;
+          e.material.opacity = e.opacity * keep;
+        }
+        for (const o of fadeGroups.get(key) ?? []) o.visible = keep > 0.01;
+      });
+    };
+
     const animate = (t: number): void => {
       timeRef.current = t;
       let docked = 0;
       dronesRef.current.forEach((d, k) => {
         const m = droneGroup.children[k];
         if (!m) return;
+        // Drones elsewhere leave the picture while flying into a pen (they share one material, so they
+        // are hidden rather than faded).
+        m.visible = focus.pen === null || focus.k < 0.5 || d.penIndex === focus.pen;
         if (d.penIndex === null) {
           // Docked: resting in the next free cradle on the barge's pontoon, nose to the pens.
           const slot = docked++;
           m.position.set(BARGE.x + 26, BARGE.y + 4, BARGE.z + DOCK_SLOTS[slot % DOCK_SLOTS.length]);
+          m.scale.setScalar(SITE_DRONE_SCALE);
           m.lookAt(m.position.x + 1, m.position.y, m.position.z);
           return;
         }
@@ -240,10 +309,17 @@ export default function SiteScene3D({ world, day, live, holes, openings, drones,
         const angle = base + (d.rule === 'sweep' ? 14 * Math.sin(t / 3 + k) : 1.5 * Math.sin(t / 2 + k));
         // Site scale: drones are drawn 8× life size, so keep them a little further off the net.
         const local = netPoint(Math.min(d.depth, WALL_DEPTH_M), angle, Math.min(0.85, 1 - d.standoffM / R));
+        // Flying into this pen, drones shrink and move to where the pen view shows them.
+        const blend = focus.pen === d.penIndex ? focus.k : 0;
+        if (blend > 0) local.lerp(dronePosition(d, t, k), blend);
         m.position.copy(centre).add(local);
-        // Face along the net (tangent to the pen), the way it sweeps.
-        const a = (angle * Math.PI) / 180;
-        m.lookAt(m.position.x + Math.cos(a), m.position.y, m.position.z + Math.sin(a));
+        m.scale.setScalar(SITE_DRONE_SCALE + (PEN_DRONE_SCALE - SITE_DRONE_SCALE) * blend);
+        if (blend > 0) faceAlongNet(m, local, centre);
+        else {
+          // Face along the net (tangent to the pen), the way it sweeps.
+          const a = (angle * Math.PI) / 180;
+          m.lookAt(m.position.x + Math.cos(a), m.position.y, m.position.z + Math.sin(a));
+        }
       });
       render();
     };
@@ -296,7 +372,7 @@ export default function SiteScene3D({ world, day, live, holes, openings, drones,
     el.addEventListener('pointerup', onUp);
     el.addEventListener('pointermove', onMove);
 
-    ctx.current = { render, textures, collars, droneGroup, animate, camera, controls };
+    ctx.current = { render, textures, collars, droneGroup, animate, camera, controls, setFocus };
     resize();
 
     return () => {
@@ -363,31 +439,36 @@ export default function SiteScene3D({ world, day, live, holes, openings, drones,
       body.userData.shared = true;
       body.renderOrder = ROBOT_RENDER_ORDER;
       body.userData.droneId = d.id;
-      body.scale.setScalar(8);
       g.add(body);
       c.droneGroup.add(g);
     }
     c.animate(timeRef.current);
   }, [drones]);
 
-  // Fly into the opened pen, or back out to the whole site.
+  // Fly into the opened pen, ending exactly where the pen view's camera starts, or back out.
   useEffect(() => {
     const c = ctx.current;
     if (!c) return;
-    const toTarget = focusPen === null ? OVERVIEW.target.clone() : penPosition(world, focusPen).add(PEN_TARGET);
-    const toPosition = focusPen === null ? OVERVIEW.position.clone() : toTarget.clone().add(PEN_OFFSET);
+    const blendPen = focusPen ?? lastFocus.current;
+    if (focusPen !== null) lastFocus.current = focusPen;
+    const toTarget = focusPen === null ? OVERVIEW.target.clone() : penPosition(world, focusPen).add(PEN_VIEW.target);
+    const toPosition = focusPen === null ? OVERVIEW.position.clone() : toTarget.clone().add(penViewOffset(c.camera.aspect));
     const fromTarget = c.controls.target.clone();
     const fromPosition = c.camera.position.clone();
+    const fromK = focusK.current;
+    const toK = focusPen === null ? 0 : 1;
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const start = performance.now();
     let raf = 0;
     const step = (now: number): void => {
-      const t = reduce ? 1 : Math.min(1, (now - start) / 900);
+      const t = reduce ? 1 : Math.min(1, (now - start) / FLY_MS);
       const k = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; // ease in and out
       c.controls.target.lerpVectors(fromTarget, toTarget, k);
       c.camera.position.lerpVectors(fromPosition, toPosition, k);
+      focusK.current = fromK + (toK - fromK) * k;
+      c.setFocus(blendPen, focusK.current);
       c.controls.update();
-      c.render();
+      c.animate(timeRef.current);
       if (t < 1) raf = requestAnimationFrame(step);
     };
     raf = requestAnimationFrame(step);
@@ -400,11 +481,10 @@ export default function SiteScene3D({ world, day, live, holes, openings, drones,
     if (!c || !live || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     let raf = 0;
     let last = 0;
-    const start = performance.now() - timeRef.current * 1000;
     const tick = (now: number): void => {
       if (now - last > 33) {
         last = now;
-        c.animate((now - start) / 1000);
+        c.animate(sceneClock(now));
       }
       raf = requestAnimationFrame(tick);
     };
