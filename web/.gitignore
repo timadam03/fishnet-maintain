@@ -3,3 +3,6 @@ dist
 # Demo videos are large; copy them in by hand (see public/videos/README.md).
 public/videos/*
 !public/videos/README.md
+# Demo runs are large; pack them in by hand (see public/runs/README.md).
+public/runs/*
+!public/runs/README.md

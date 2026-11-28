@@ -1,6 +1,6 @@
 # Plan: the whole pipeline inside the dashboard
 
-Status: proposal, 2026-11-28. Nothing below is built yet. The loop itself (sweep → detect → decide →
+Status: 2026-11-28. Step 1 is built; the rest is a proposal. The loop itself (sweep → detect → decide →
 guided run → learn) is in [`docs/closed-loop.md`](../docs/closed-loop.md), its file formats in
 [`docs/contracts.md`](../docs/contracts.md).
 
@@ -83,8 +83,11 @@ stay unobserved. If depths should stay true instead (open decision 6), only this
 
 ## Steps
 
-1. **Bundle format, packing script and loader** (small to medium). Start from
-   `contracts/example-run/` so it can be built before a real run arrives.
+1. **Bundle format, packing script and loader. Done.** Format and loader: `src/data/runs.ts`
+   (`parseManifest`, `loadRunIndex`, `loadRun`, `simToPen`, `simCell`, `sampleTelemetry`). Packer:
+   `scripts/pack-run.mjs` (`npm run pack-run`; `npm run pack-run:example` packs
+   `contracts/example-run/`). Tests: `src/data/runs.test.ts`, `scripts/pack-run.test.mjs`. Not yet
+   tried on a real run: the recorded-telemetry path is tested with files in the sim's format.
 2. **Replay in Pen 7** (medium). Drones from telemetry, run clock and scrubber, ropes from `meta.json`,
    clearance rings and photo flashes.
 3. **Coverage and findings from the run** (medium). `captures.jsonl` and `vision.jsonl` on Pen 7's net.
