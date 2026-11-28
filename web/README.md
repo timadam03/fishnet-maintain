@@ -55,6 +55,12 @@ All data is **synthetic** (a seeded simulation), and the top bar says "Demo data
 - **Data trust.** Areas not seen for 14 or more days are hatched and always get "sample more"; Pen 8's
   cone drone is docked. A frozen oxygen sensor (Pen 7, 15 m) is drawn hollow and flagged.
 
+- **Demo video in the robot window.** Clicking a drone plays the demo run from the Isaac simulation in
+  its window (muted, looping). The expand button, or F, zooms the video to fill the stage with sound;
+  Esc zooms back out, space pauses. Put the file at `public/videos/robot-demo.mp4` (not committed; see
+  `public/videos/README.md`). Without it, the window shows the drawn camera feed. Which pens' drones
+  play it is set in `src/lib/demoVideo.ts`.
+
 ### Demo cases
 
 - **Today, Pen 2 (`#pen=2`):** a seal bite yesterday left a hole at 5–7.5 m, 255–270°. It is
