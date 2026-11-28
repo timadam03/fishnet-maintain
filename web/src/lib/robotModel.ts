@@ -1,6 +1,6 @@
 /**
  * A simple, light drone model in the style of the BlueROV2 (rounded black side frames with a window,
- * blue top fairings, white electronics tube with camera dome, battery tube, six ducted thrusters), built
+ * yellow top fairings, white electronics tube with camera dome, battery tube, six ducted thrusters), built
  * from a dozen primitives with the real
  * vehicle's proportions (about 0.46 × 0.34 × 0.25 m). One merged geometry with vertex colours, so
  * every drone is a single cheap draw.
@@ -9,7 +9,8 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 const FRAME = '#1d2326';
-const COVER = '#2f8fc4';
+/** Yellow, like the vehicles in the simulation. */
+const COVER = '#f0b41c';
 const TUBE = '#e9edef';
 const BATTERY = '#c9cfd3';
 const THRUSTER = '#2c3438';
@@ -62,7 +63,7 @@ function build(): THREE.BufferGeometry {
     part(framePlate(), FRAME, [0.165, 0, 0]),
     part(framePlate(), FRAME, [-0.165, 0, 0]),
     part(new THREE.CapsuleGeometry(0.012, 0.36, 2, 6), FRAME, [0, -0.11, 0], alongZ),
-    // Rounded blue top fairings.
+    // Rounded yellow top fairings.
     part(pod(), COVER, [0.085, 0.1, -0.02], alongZ),
     part(pod(), COVER, [-0.085, 0.1, -0.02], alongZ),
     // Electronics tube with a dark camera dome at the front, battery tube below.

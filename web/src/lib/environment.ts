@@ -25,12 +25,12 @@ export const environment = {
   surfaceOpacity: 0.2,
   /** HDPE floating collars are dark grey-black on real farms. */
   collar: '#3a4144',
-  /** Marine growth (fouling) as it looks on a net: olive brown. */
-  growth: '#6b6a3a',
+  /** Marine growth (fouling) on twine: olive brown, as the simulation's `net_fouled`. */
+  growth: '#5e4f22',
   collarHover: '#55767e',
 };
 
 export type Environment = typeof environment;
 
-/** How opaque the nets are in 3D: enough to read the heatmap, light enough to see inside. */
-export const NET_OPACITY = 0.78;
+/** Net material opacity in 3D. The texture carries the see-through (a light tint under dark twine). */
+export const NET_OPACITY = 1;

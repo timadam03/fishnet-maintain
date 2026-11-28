@@ -3,7 +3,7 @@
  * (wrapping around the pen), then coloured in bands, so the net reads as a continuous surface with soft
  * contours instead of a grid of boxes. Used for the unrolled net map and as the 3D model's texture.
  */
-import { ANGLE_SECTORS, CELLS, ROWS, cellCol, cellRow, type Finding } from '../data/model';
+import { ANGLE_SECTORS, CELLS, ROWS, WALL_ROWS, cellCol, cellRow, type Finding } from '../data/model';
 import { cellColor, type LayerDef, type LayerGrid } from './layers';
 import { hashNoise } from '../data/rng';
 import { environment } from './environment';
@@ -155,35 +155,86 @@ export function drawHole(ctx: CanvasRenderingContext2D, x: number, y: number, r:
   ctx.restore();
 }
 
+/** How opaque the layer colour is on the net: enough to read the data, light enough to see inside. */
+const FILL_ALPHA = 150;
+/** Twine and panel ropes, dark against the water as in the simulation (fishfarm_demo.py `net`). */
+const TWINE = '22, 35, 31';
+
+/** Diamond netting over a rectangle: one family of diagonals each way. */
+function diamonds(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, step: number): void {
+  ctx.beginPath();
+  for (let o = -h; o < w + h; o += step) {
+    ctx.moveTo(x + o, y);
+    ctx.lineTo(x + o + h, y + h);
+    ctx.moveTo(x + o, y + h);
+    ctx.lineTo(x + o + h, y);
+  }
+  ctx.stroke();
+}
+
 /**
- * Paints the whole net (wall rows then cone rows) as one rectangle: angle across, depth down.
- * This is the 3D texture; the unrolled map draws the wall from it and the cone separately.
+ * The net as the simulation draws it: dark diamond twine, with thicker ropes along the panel edges
+ * (every 30° and at the wall's middle and foot).
  */
+function drawTwine(ctx: CanvasRenderingContext2D, w: number, h: number, cw: number, ch: number): void {
+  ctx.strokeStyle = `rgba(${TWINE}, 0.6)`;
+  ctx.lineWidth = Math.max(1, cw / 42);
+  diamonds(ctx, 0, 0, w, h, Math.max(5, cw / 3.2));
+  ctx.strokeStyle = `rgba(${TWINE}, 0.85)`;
+  ctx.lineWidth = Math.max(1.5, cw / 16);
+  ctx.beginPath();
+  for (let col = 0; col <= ANGLE_SECTORS; col += 2) {
+    ctx.moveTo(col * cw, 0);
+    ctx.lineTo(col * cw, WALL_ROWS * ch);
+  }
+  for (const row of [WALL_ROWS / 2, WALL_ROWS]) {
+    ctx.moveTo(0, row * ch);
+    ctx.lineTo(w, row * ch);
+  }
+  ctx.stroke();
+}
+
 /** Fouling above this shows as growth on the net itself, whatever layer is on. */
 const GROWTH_FROM = 0.72;
 
 /**
- * Heavy fouling drawn the way it looks on a net: soft olive blotches. Physical appearance, not a
- * data colour, so it can sit on top of any layer.
+ * Heavy fouling drawn the way it looks on a net, and as the simulation draws it: the twine thickens
+ * with olive-brown growth, with clumps at some crossings. Physical appearance, not a data colour, so
+ * it sits on top of any layer.
  */
 function drawGrowth(ctx: CanvasRenderingContext2D, fouling: ArrayLike<number>, cw: number, ch: number): void {
-  ctx.fillStyle = environment.growth;
+  const step = Math.max(5, cw / 3.2);
   for (let c = 0; c < CELLS; c++) {
-    const amount = (fouling[c] - GROWTH_FROM) / (1 - GROWTH_FROM);
+    const amount = Math.min(1, ((fouling[c] - GROWTH_FROM) / (1 - GROWTH_FROM)) * 1.5);
     if (amount <= 0) continue;
-    const x0 = cellCol(c) * cw;
-    const y0 = cellRow(c) * ch;
-    for (let k = 0; k < 18; k++) {
-      ctx.globalAlpha = 0.3 + 0.45 * Math.min(1, amount * 1.5) * hashNoise(c, k, 5);
+    const cx = (cellCol(c) + 0.5) * cw;
+    const cy = (cellRow(c) + 0.5) * ch;
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, cw * 0.75, ch * 0.75, 0, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.globalAlpha = 0.35 + 0.5 * amount;
+    ctx.strokeStyle = environment.growth;
+    ctx.lineWidth = Math.max(2, step * 0.35);
+    diamonds(ctx, cx - cw, cy - ch, cw * 2, ch * 2, step);
+    ctx.fillStyle = environment.growth;
+    for (let k = 0; k < 10; k++) {
+      ctx.globalAlpha = (0.3 + 0.5 * hashNoise(c, k, 5)) * amount;
       ctx.beginPath();
-      ctx.ellipse(x0 + hashNoise(c, k, 1) * cw, y0 + hashNoise(c, k, 2) * ch, (0.12 + 0.2 * hashNoise(c, k, 3)) * cw, (0.1 + 0.18 * hashNoise(c, k, 4)) * ch, 0, 0, Math.PI * 2);
+      ctx.arc(cx + (hashNoise(c, k, 1) - 0.5) * cw * 1.4, cy + (hashNoise(c, k, 2) - 0.5) * ch * 1.4, step * (0.3 + 0.4 * hashNoise(c, k, 3)), 0, Math.PI * 2);
       ctx.fill();
     }
+    ctx.restore();
   }
   ctx.globalAlpha = 1;
 }
 
-/** @param fouling per-cell fouling, drawn as growth on the net (leave out on the fouling layer itself). */
+/**
+ * Paints the whole net (wall rows then cone rows) as one rectangle, angle across and depth down: the
+ * 3D model's texture. The layer colour is a see-through tint under dark twine, so the net reads like
+ * the simulated one and the inside of the pen stays visible.
+ * @param fouling per-cell fouling, drawn as growth on the net (leave out on the fouling layer itself).
+ */
 export function paintNetTexture(canvas: HTMLCanvasElement, grid: LayerGrid, layer: LayerDef, holes: Finding[], fouling?: ArrayLike<number>): void {
   const w = canvas.width;
   const h = canvas.height;
@@ -193,7 +244,11 @@ export function paintNetTexture(canvas: HTMLCanvasElement, grid: LayerGrid, laye
   const img = ctx.createImageData(w, h);
   for (let y = 0; y < h; y++) {
     const row = ((y + 0.5) / h) * ROWS;
-    for (let x = 0; x < w; x++) sample(field, row, ((x + 0.5) / w) * ANGLE_SECTORS, img.data, (y * w + x) * 4);
+    for (let x = 0; x < w; x++) {
+      const at = (y * w + x) * 4;
+      sample(field, row, ((x + 0.5) / w) * ANGLE_SECTORS, img.data, at);
+      img.data[at + 3] = FILL_ALPHA;
+    }
   }
   ctx.putImageData(img, 0, 0);
   const cw = w / ANGLE_SECTORS;
@@ -203,7 +258,7 @@ export function paintNetTexture(canvas: HTMLCanvasElement, grid: LayerGrid, laye
     ctx.fillStyle = pattern;
     for (let c = 0; c < CELLS; c++) if (grid.stale[c]) ctx.fillRect(cellCol(c) * cw, cellRow(c) * ch, cw, ch);
   }
+  drawTwine(ctx, w, h, cw, ch);
   if (fouling) drawGrowth(ctx, fouling, cw, ch);
-  drawMesh(ctx, 0, 0, w, h, Math.max(6, cw / 4));
   for (const f of holes) drawHole(ctx, (cellCol(f.cell) + 0.5) * cw, (cellRow(f.cell) + 0.5) * ch, Math.min(cw, ch) * 0.32);
 }

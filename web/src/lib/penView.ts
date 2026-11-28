@@ -5,6 +5,7 @@
  * that already match.
  */
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CONE_TIP_M, PEN_RADIUS_M, SECTOR_DEG, WALL_DEPTH_M, cellCol } from '../data/model';
 import type { Drone } from '../data/swarm';
 import { environment } from './environment';
@@ -59,27 +60,46 @@ export function faceAlongNet(m: THREE.Object3D, p: THREE.Vector3, centre: THREE.
   m.lookAt(centre.x + p.x + Math.cos(a), centre.y + p.y, centre.z + p.z + Math.sin(a));
 }
 
-/** Floating collar, sinker tube, chains, mooring lines and the cone weight of one pen, centred on the origin. */
+/** Colours of the simulated pen (fishfarm_demo.py): HDPE collar, steel sinker ring, rope, floats. */
+const STEEL = '#8b9196';
+const ROPE = '#283a33';
+const FLOAT = '#e6b422';
+
+/**
+ * Everything around one pen's net, centred on the origin and styled after the simulated pen: a black
+ * double collar with a handrail on posts, a steel sinker ring, rope downlines, mooring lines, the cone
+ * weight, and ropes hanging inside the pen on yellow floats (the obstacles the robots steer around).
+ * The first child is the collar, which the site view highlights on hover.
+ */
 export function buildRigging(): THREE.Group {
   const group = new THREE.Group();
   const hdpe = new THREE.MeshLambertMaterial({ color: environment.collar });
-  for (const radius of [R + 0.6, R + 2.0]) {
-    const torus = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.45, 8, 96), hdpe);
+  const ring = (radius: number, tube: number, y: number, material: THREE.Material): THREE.Mesh => {
+    const torus = new THREE.Mesh(new THREE.TorusGeometry(radius, tube, 8, 96), material);
     torus.rotation.x = Math.PI / 2;
-    torus.position.y = 0.3;
-    group.add(torus);
+    torus.position.y = y;
+    return torus;
+  };
+  const collar = ring(R + 0.4, 0.5, 0.3, hdpe);
+  group.add(collar, ring(R + 2.0, 0.5, 0.3, hdpe), ring(R + 1.2, 0.14, 2.1, hdpe));
+  // Handrail posts, merged into one mesh.
+  const posts: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < 24; i++) {
+    const a = (i / 24) * Math.PI * 2;
+    posts.push(new THREE.CylinderGeometry(0.12, 0.12, 1.8, 6).translate((R + 1.2) * Math.cos(a), 1.2, (R + 1.2) * Math.sin(a)));
   }
-  const sinker = new THREE.Mesh(new THREE.TorusGeometry(R + 1.2, 0.55, 8, 96), new THREE.MeshLambertMaterial({ color: color.ink3 }));
-  sinker.rotation.x = Math.PI / 2;
-  sinker.position.y = -(WALL_DEPTH_M + 1.5);
-  group.add(sinker);
+  const merged = mergeGeometries(posts);
+  posts.forEach((g) => g.dispose());
+  if (merged) group.add(new THREE.Mesh(merged, hdpe));
 
-  const chainPts: THREE.Vector3[] = [];
-  for (let a = 0; a < 360; a += 45) {
-    const top = netPoint(0, a, (R + 1.2) / R);
-    chainPts.push(top, top.clone().setY(-(WALL_DEPTH_M + 1.5)));
+  group.add(ring(R, 0.4, -WALL_DEPTH_M, new THREE.MeshLambertMaterial({ color: STEEL })));
+
+  const ropePts: THREE.Vector3[] = [];
+  for (let a = 0; a < 360; a += 30) {
+    const top = netPoint(0, a, (R + 0.4) / R);
+    ropePts.push(top, top.clone().setY(-WALL_DEPTH_M));
   }
-  group.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(chainPts), new THREE.LineBasicMaterial({ color: color.ink3 })));
+  group.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(ropePts), new THREE.LineBasicMaterial({ color: ROPE })));
 
   const moorPts: THREE.Vector3[] = [];
   for (const a of [45, 135, 225, 315]) {
@@ -89,7 +109,19 @@ export function buildRigging(): THREE.Group {
   }
   group.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(moorPts), new THREE.LineBasicMaterial({ color: color.coast, transparent: true, opacity: 0.6 })));
 
-  const weight = new THREE.Mesh(new THREE.SphereGeometry(0.9, 12, 12), new THREE.MeshLambertMaterial({ color: color.ink3 }));
+  // Ropes hanging inside the pen from floats, well clear of where the drones work along the net.
+  const rope = new THREE.MeshLambertMaterial({ color: ROPE });
+  const float = new THREE.MeshLambertMaterial({ color: FLOAT });
+  for (const a of [30, 120, 210, 300]) {
+    const p = netPoint(0, a, 0.5);
+    const line = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 16, 6), rope);
+    line.position.set(p.x, -8, p.z);
+    const buoy = new THREE.Mesh(new THREE.SphereGeometry(0.9, 14, 10), float);
+    buoy.position.set(p.x, 0.5, p.z);
+    group.add(line, buoy);
+  }
+
+  const weight = new THREE.Mesh(new THREE.SphereGeometry(0.9, 12, 12), new THREE.MeshLambertMaterial({ color: STEEL }));
   weight.position.y = -CONE_TIP_M - 0.8;
   group.add(weight);
   return group;
