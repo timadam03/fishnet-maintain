@@ -10,6 +10,10 @@ run_loop.ps1 -- the closed loop on the Windows GPU machine, in one command.
 
   powershell -ExecutionPolicy Bypass -File abyss-sim\scripts\run_loop.ps1 -Isaac C:\isaacsim51 -Out C:\abyss_out\loop2
 
+-Runthrough renders the whole loop as one demo video at the end: <Out>\runthrough_<grader>.mp4
+(sweep, classifier, decision layer, the robots acting, results; tools\make_runthrough.py). With
+-Record it shows the recordings, without it the photos.
+
 -Grader d1 grades the cells with the d1 decision model instead of the rules (needs
 AI_GATEWAY_API_KEY in the repo's .env). To compare both on the same sweep, run the rules loop
 first, then the same -Out with -SkipSweep -Grader d1: the score shows both plans side by side.
@@ -28,6 +32,7 @@ param(
   [switch]$Record,                    # also record videos of both runs (slower)
   [switch]$KeepMemory,                # don't reset the decision layer first
   [switch]$SkipSweep,                 # reuse <Out>\run_sweep and start from the detect step
+  [switch]$Runthrough,                # render the demo video of the whole loop at the end
   [ValidateSet("rules", "d1")]
   [string]$Grader = "rules"           # who grades the cells: the plan rules, or the d1 model
 )
@@ -45,6 +50,7 @@ $Sweep = Join-Path $Out "run_sweep"
 $PlanRun = Join-Path $Out "run_plan_$Grader"
 $PlanFile = Join-Path $Sweep "plan_$Grader.json"
 $Score = Join-Path $SimRoot "tools\score_loop.py"
+$MakeRunthrough = Join-Path $SimRoot "tools\make_runthrough.py"
 $Db = Join-Path $Repo "shoal.db"
 
 function Step($text) { Write-Host ""; Write-Host "=== $text ===" -ForegroundColor Cyan }
@@ -148,6 +154,8 @@ Run-Vision $PlanRun
 Decision @("import", $PlanRun, "--grader", $Grader)
 Decision @("missions")
 Decision @("plan", "--grader", $Grader, "--out", (Join-Path $PlanRun "next_plan.json"))
+# The next loop's reset clears the missions: keep this loop's results next to its photos.
+Copy-Item $Db (Join-Path $PlanRun "shoal.db") -Force
 
 # ------------------------------------------------------------------ 6. score
 Step "6/6 score: plans and mission results vs ground truth"
@@ -167,3 +175,8 @@ foreach ($run in @($Sweep, $PlanRun)) {
 Write-Host "Plan:      $PlanFile"
 Write-Host "Overlays:  $(Join-Path $Sweep 'overlays')  and  $(Join-Path $PlanRun 'overlays')"
 if ($Record) { Write-Host "Videos:    $Out\rec_sweep, $Out\rec_plan_$Grader (the .mp4 files in each)" }
+if ($Runthrough) {
+  Step "runthrough: the whole loop as one demo video"
+  & $IsaacPy $MakeRunthrough $Out --grader $Grader
+  if ($LASTEXITCODE -ne 0) { Write-Host "the runthrough video failed (the loop itself is done)" -ForegroundColor Yellow }
+}
