@@ -852,13 +852,22 @@ def make_obstacles(n, seed=3):
     13+:  random inside the pen (kept clear of the start positions and of each other)."""
     orng = np.random.default_rng(seed)
     pick_r = lambda: float(orng.choice([0.08, 0.12, 0.12, 0.2]))   # thin rope ... feed hose
-    tiered = []
+    paths, transits = [], []
     for k in range(N_AUV):
         a = (k + 0.5) * SECTOR
-        mid_xy = (homes[k][:2] + plans[k][0]["pos"][:2]) / 2
-        tiered.append(("path", (R_PATH * math.cos(a), R_PATH * math.sin(a))))
-        tiered.append(("transit", (mid_xy[0], mid_xy[1])))
-    tiered = [tiered[i] for i in [0, 3, 4, 1, 2, 5]]
+        paths.append(("path", (R_PATH * math.cos(a), R_PATH * math.sin(a))))
+        start, first = np.asarray(homes[k][:2], float), np.asarray(plans[k][0]["pos"][:2], float)
+        # A transit rope goes halfway between the start and the first photo spot. In the centre
+        # survey the start IS the photo spot (the ROV only turns), so halfway would be on top of the
+        # station: every shot gets dropped as blocked and the ROV starts inside the rope. No transit
+        # there means no transit rope; the slot goes to a random rope kept clear of the stations.
+        if np.linalg.norm(first - start) > 1.0:
+            mid_xy = (start + first) / 2
+            transits.append(("transit", (mid_xy[0], mid_xy[1])))
+    if len(transits) == N_AUV == 3:
+        tiered = [paths[0], transits[1], paths[2], transits[0], paths[1], transits[2]]   # as before
+    else:
+        tiered = paths + transits
     for frac, dr in ((0.25, -0.45), (0.75, +0.45)):      # just beside the path: forces a swerve,
         for k in range(N_AUV):                              # costs at most one photo per pass
             a = (k + frac) * SECTOR
