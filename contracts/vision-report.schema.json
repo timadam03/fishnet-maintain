@@ -38,6 +38,16 @@
       "minimum": 0,
       "maximum": 1
     },
+    "cells_in_view": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 191,
+        "description": "Wall cell on the UI grid: row * 24 + col"
+      },
+      "description": "Every cell the photo shows: \"looked, nothing there\" counts for all of them, not just the capture cell"
+    },
     "detections": {
       "type": "array",
       "items": {
@@ -81,6 +91,12 @@
             "minItems": 4,
             "maxItems": 4,
             "description": "[x, y, w, h] in pixels"
+          },
+          "cell": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 191,
+            "description": "Cell the detection itself is on (from its pixel position); default: the capture cell"
           },
           "severity": {
             "type": "string",

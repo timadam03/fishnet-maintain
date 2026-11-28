@@ -36,6 +36,8 @@ export interface Observation {
   model: string;
   quality: { visibility: number; sharpness: number } | null;
   fouling: number | null;
+  /** Cells the photo shows (vision report cells_in_view); null for reports that don't say. */
+  cellsInView: number[] | null;
   detections: VisionReport['detections'];
 }
 
@@ -74,8 +76,8 @@ export function importObservations(
   const reports = input.reports.map((r) => VisionReport.parse(r));
   const unmatchedReports: string[] = [];
   const insert = store.db.prepare(
-    `INSERT INTO observations (run_id, image, pen_id, cell, auv, sim_time, standoff_m, target_id, model, quality_json, fouling, detections_json, imported_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(run_id, image) DO NOTHING`,
+    `INSERT INTO observations (run_id, image, pen_id, cell, auv, sim_time, standoff_m, target_id, model, quality_json, fouling, detections_json, imported_at, cells_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(run_id, image) DO NOTHING`,
   );
   let imported = 0;
   const touchedTargets = new Set<string>();
@@ -89,7 +91,7 @@ export function importObservations(
     const res = insert.run(
       c?.run_id ?? 'external', r.image, r.where?.pen_id ?? input.penId, c?.cell ?? r.where!.cell, c?.auv ?? r.where?.auv ?? null,
       c?.sim_time ?? null, standoff, c?.target_id ?? null, r.model, r.quality ? JSON.stringify(r.quality) : null,
-      r.fouling_pct ?? null, JSON.stringify(r.detections), new Date().toISOString(),
+      r.fouling_pct ?? null, JSON.stringify(r.detections), new Date().toISOString(), r.cells_in_view ? JSON.stringify(r.cells_in_view) : null,
     );
     imported += Number(res.changes);
     if (c?.target_id) touchedTargets.add(c.target_id);
@@ -109,8 +111,30 @@ export function observations(store: Store, filter: { penId: number; cell?: numbe
     auv: r.auv === null ? null : Number(r.auv), simTime: r.sim_time === null ? null : Number(r.sim_time),
     standoffM: r.standoff_m === null ? null : Number(r.standoff_m), targetId: (r.target_id as string) ?? null, model: String(r.model),
     quality: r.quality_json ? JSON.parse(String(r.quality_json)) : null, fouling: r.fouling === null ? null : Number(r.fouling),
+    cellsInView: r.cells_json ? JSON.parse(String(r.cells_json)) : null,
     detections: JSON.parse(String(r.detections_json)),
   }));
+}
+
+/**
+ * Credits each photo to every cell it shows, each with only the detections on that cell.
+ *
+ * A far survey photo spans about 4 x 4 cells. Crediting it all to its centre cell put a hole seen at
+ * the edge of the frame on the wrong cell (so the close-up went to the wrong place), and left the
+ * other cells unseen. Reports without per-detection cells keep the old behaviour.
+ */
+export function creditByCell(all: Observation[]): Map<number, Observation[]> {
+  const out = new Map<number, Observation[]>();
+  const add = (cell: number, o: Observation) => out.set(cell, [...(out.get(cell) ?? []), o]);
+  for (const o of all) {
+    const cells = new Set([o.cell, ...(o.cellsInView ?? []), ...o.detections.map((d) => d.cell ?? o.cell)]);
+    for (const cell of cells) {
+      const own = o.detections.filter((d) => (d.cell ?? o.cell) === cell);
+      // Photo-wide fouling stays with the capture cell; elsewhere the biofouling detections speak.
+      add(cell, cell === o.cell ? { ...o, detections: own } : { ...o, cell, fouling: null, detections: own });
+    }
+  }
+  return out;
 }
 
 export type CellStatus = 'confirmed_opening' | 'possible_opening' | 'wear' | 'uncertain' | 'unclear' | 'fouled' | 'clear';
@@ -169,16 +193,20 @@ function closeMissions(store: Store, targetIds: Set<string>): ImportResult['miss
     if (!row || row.status === 'done' || row.status === 'cancelled') continue;
     const obs = observations(store, { penId: row.pen_id, targetId });
     if (obs.length === 0) continue;
-    const a = assessCell(obs[0].cell, obs);
+    const credited = creditByCell(obs);
+    const a = assessCell(obs[0].cell, credited.get(obs[0].cell) ?? []);
+    // What the close-ups showed next door: the next plan picks these up as their own cells.
+    const nextDoor = [...credited].filter(([c, o]) => c !== obs[0].cell && assessCell(c, o).opening >= 0.7).map(([c]) => c);
     const result =
       a.status === 'confirmed_opening' ? `confirmed: opening seen from ${a.openingViews} viewpoints (best p=${a.opening.toFixed(2)})`
       : a.status === 'possible_opening' ? `possible opening (p=${a.opening.toFixed(2)}), one view only`
       : a.status === 'wear' ? `confirmed: wear sign (p=${a.wear.toFixed(2)})`
       : a.status === 'clear' ? `clear: ${a.images} good image${a.images > 1 ? 's' : ''}, nothing found`
       : `${a.status}: needs another look`;
+    const extra = nextDoor.length ? `; possible opening next door in cell ${nextDoor.join(', ')}` : '';
     const robots = [...new Set(obs.map((o) => o.auv).filter((x): x is number => x !== null))].map((k) => `AUV-${k}`).join(', ');
-    updateMission(store, missionId, { status: 'done', robot: robots || undefined, result });
-    closed.push({ missionId, result });
+    updateMission(store, missionId, { status: 'done', robot: robots || undefined, result: result + extra });
+    closed.push({ missionId, result: result + extra });
   }
   return closed;
 }
@@ -219,6 +247,27 @@ function profilesFor(a: CellAssessment | null, risk: { level: string; score: num
   return out;
 }
 
+/**
+ * How a grader (the rules below, or d1 in grade-d1.ts) judged one cell. A grader may also set the
+ * cell's priority; scan distance, viewpoints, robots and safety margins always come from the plan
+ * rules for that status, so a model can reorder and reclassify, never send a robot into the net.
+ */
+export interface Grade extends CellAssessment {
+  by: 'rules' | 'd1';
+  priority?: number;
+  note?: string;
+}
+
+/** The rules grader: assessCell on what each cell's photos show. */
+export function gradeByRules(byCell: Map<number, Observation[]>): Map<number, Grade> {
+  return new Map([...byCell].map(([cell, obs]) => [cell, { ...assessCell(cell, obs), by: 'rules' as const }]));
+}
+
+/** Every cell's observations for a pen, credited by cell. */
+export function observationsByCell(store: Store, penId: number): Map<number, Observation[]> {
+  return creditByCell(observations(store, { penId }));
+}
+
 /** Combines the profiles for one cell: highest priority wins, margins and robots take the max. */
 function merge(profiles: Profile[], marginBoost: number): Profile & { reasons: Profile['reason'][] } {
   const sorted = [...profiles].sort((a, b) => b.priority - a.priority);
@@ -244,20 +293,29 @@ const angleDist = (a: number, b: number): number => Math.abs(((a - b + 540) % 36
  * Builds the plan for one pen: targets best first, robots assigned so each goes where it is
  * closest and least busy, and two robots on anything that needs two perspectives.
  */
-export function buildPlan(store: Store, input: { penId: number; day: number; robots?: number; maxTargets?: number }): InspectionPlan {
+export function buildPlan(
+  store: Store,
+  input: { penId: number; day: number; robots?: number; maxTargets?: number; grades?: Map<number, Grade> },
+): InspectionPlan {
   const nRobots = input.robots ?? 3;
   const sim = penSim(input.penId);
   const strongCurrent = world.env.currentSpeed[input.day] >= STRONG_CURRENT_CM_S;
-  const byCell = new Map<number, Observation[]>();
-  for (const o of observations(store, { penId: input.penId })) byCell.set(o.cell, [...(byCell.get(o.cell) ?? []), o]);
+  const byCell = observationsByCell(store, input.penId);
+  const grades = input.grades ?? gradeByRules(byCell);
 
   const candidates: Array<ReturnType<typeof merge> & { cell: number; risk: number }> = [];
   for (let cell = 0; cell < GRID.sectors * GRID.wallRows; cell++) {
-    const obs = byCell.get(cell);
+    const grade = grades.get(cell) ?? null;
     const risk = explainRisk(sim, cell, input.day);
-    const profiles = profilesFor(obs ? assessCell(cell, obs) : null, risk);
+    const profiles = profilesFor(grade, risk);
     if (profiles.length === 0) continue;
     const merged = merge(profiles, strongCurrent ? 0.4 : 0);
+    if (grade?.by === 'd1') {
+      if (grade.priority !== undefined) merged.priority = grade.priority;
+      merged.reasons.unshift({ rule: 'D1', text: grade.note ?? `d1 graded this cell ${grade.status}.` });
+    } else if (grade?.note) {
+      merged.reasons.push({ rule: 'D1-fallback', text: grade.note });
+    }
     if (strongCurrent) merged.reasons.push({ rule: 'G1', text: `Strong current (${world.env.currentSpeed[input.day].toFixed(0)} cm/s): margin +0.4 m.` });
     candidates.push({ ...merged, cell, risk: risk.score });
   }
@@ -300,7 +358,7 @@ export function buildPlan(store: Store, input: { penId: number; day: number; rob
     created_at: new Date().toISOString(),
     pen_id: input.penId,
     day: input.day,
-    rules_version: PLAN_RULES_VERSION,
+    rules_version: [...grades.values()].some((g) => g.by === 'd1') ? `${PLAN_RULES_VERSION}+d1` : PLAN_RULES_VERSION,
     grid: { sectors: GRID.sectors, wall_rows: GRID.wallRows },
     robots: nRobots,
     targets,

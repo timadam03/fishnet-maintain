@@ -3,11 +3,16 @@ run_loop.ps1 -- the closed loop on the Windows GPU machine, in one command.
 
   1. sweep    Isaac Sim: centre survey of the whole net           -> <Out>\run_sweep
   2. detect   net detector on every sweep photo                    -> run_sweep\vision.jsonl
-  3. decide   decision layer: import the sweep, write the plan     -> run_sweep\plan.json
-  4. act      Isaac Sim: fly the plan (closer, other angles)       -> <Out>\run_plan
+  3. decide   decision layer: grade every cell, write the plan     -> run_sweep\plan_<grader>.json
+  4. act      Isaac Sim: fly the plan (closer, other angles)       -> <Out>\run_plan_<grader>
   5. learn    detect the new photos and import them: missions close with results
+  6. score    the plan and the mission results against the sim's ground truth
 
-  powershell -ExecutionPolicy Bypass -File abyss-sim\scripts\run_loop.ps1 -Isaac C:\isaacsim51 -Out C:\abyss_out\loop1
+  powershell -ExecutionPolicy Bypass -File abyss-sim\scripts\run_loop.ps1 -Isaac C:\isaacsim51 -Out C:\abyss_out\loop2
+
+-Grader d1 grades the cells with the d1 decision model instead of the rules (needs
+AI_GATEWAY_API_KEY in the repo's .env). To compare both on the same sweep, run the rules loop
+first, then the same -Out with -SkipSweep -Grader d1: the score shows both plans side by side.
 
 Needs Isaac Sim 5.1, Node 24+ for the decision layer, and a Python with opencv-python and numpy
 (a normal Python, or Isaac's own if it has OpenCV). The sweep and the plan run share the same scene
@@ -22,7 +27,9 @@ param(
   [switch]$Lite,                      # 640x360, faster: for checking the loop works
   [switch]$Record,                    # also record videos of both runs (slower)
   [switch]$KeepMemory,                # don't reset the decision layer first
-  [switch]$SkipSweep                  # reuse <Out>\run_sweep and start from the detect step
+  [switch]$SkipSweep,                 # reuse <Out>\run_sweep and start from the detect step
+  [ValidateSet("rules", "d1")]
+  [string]$Grader = "rules"           # who grades the cells: the plan rules, or the d1 model
 )
 
 # Every step is checked explicitly below. Not "Stop": in Windows PowerShell 5.1 that turns any
@@ -35,8 +42,10 @@ $MakeVideo = Join-Path $SimRoot "tools\make_video.py"
 $DecisionLayer = Join-Path $Repo "decision-layer"
 $IsaacPy = Join-Path $Isaac "python.bat"
 $Sweep = Join-Path $Out "run_sweep"
-$PlanRun = Join-Path $Out "run_plan"
-$PlanFile = Join-Path $Sweep "plan.json"
+$PlanRun = Join-Path $Out "run_plan_$Grader"
+$PlanFile = Join-Path $Sweep "plan_$Grader.json"
+$Score = Join-Path $SimRoot "tools\score_loop.py"
+$Db = Join-Path $Repo "shoal.db"
 
 function Step($text) { Write-Host ""; Write-Host "=== $text ===" -ForegroundColor Cyan }
 function Fail($text) { Write-Host ""; Write-Host "STOPPED: $text" -ForegroundColor Red; exit 1 }
@@ -64,8 +73,14 @@ if (-not (Test-Path (Join-Path $DecisionLayer "node_modules"))) {
   try { & npm ci; if ($LASTEXITCODE -ne 0) { Fail "npm ci failed in $DecisionLayer" } } finally { Pop-Location }
 }
 
+if ($Grader -eq "d1") {
+  $envFile = Join-Path $Repo ".env"
+  $hasKey = (Test-Path $envFile) -and (Select-String -Path $envFile -Pattern "^\s*AI_GATEWAY_API_KEY\s*=\s*\S" -Quiet)
+  if (-not $hasKey -and -not $env:AI_GATEWAY_API_KEY) { Fail "-Grader d1 needs AI_GATEWAY_API_KEY=... in $envFile" }
+}
+
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
-Write-Host "Isaac Sim: $Isaac | detector Python: $Py | Node $nodeMajor | output: $Out"
+Write-Host "Isaac Sim: $Isaac | detector Python: $Py | Node $nodeMajor | grader: $Grader | output: $Out"
 
 # Same scene for the sweep and the plan run: these flags place the ropes and the net defects.
 $Scene = @("--headless", "--safe-nav", "--obstacles", "$Obstacles", "--defect-seed", "$Seed", "--full-coverage")
@@ -103,19 +118,19 @@ if ($SkipSweep) {
   if (-not (Test-Path (Join-Path $Sweep "captures.jsonl"))) { Fail "-SkipSweep, but there is no sweep in $Sweep" }
   Write-Host "reusing the sweep in $Sweep"
 } else {
-  Step "1/5 sweep: centre survey of the whole net"
+  Step "1/6 sweep: centre survey of the whole net"
   Run-Sim "sweep" $Sweep
 }
 
 # ------------------------------------------------------------------ 2. detect
-Step "2/5 detect: net detector on the sweep photos"
+Step "2/6 detect: net detector on the sweep photos"
 Run-Vision $Sweep
 
 # ------------------------------------------------------------------ 3. decide
-Step "3/5 decide: grade the net and plan the close-ups"
+Step "3/6 decide: grade the net ($Grader) and plan the close-ups"
 if (-not $KeepMemory) { Decision @("reset") }
 Decision @("import", $Sweep)
-Decision @("plan", "--out", $PlanFile)
+Decision @("plan", "--grader", $Grader, "--out", $PlanFile)
 $plan = Get-Content $PlanFile -Raw | ConvertFrom-Json
 if ($plan.targets.Count -eq 0) {
   Write-Host ""
@@ -124,14 +139,19 @@ if ($plan.targets.Count -eq 0) {
 }
 
 # ------------------------------------------------------------------ 4. act
-Step "4/5 act: the ROVs fly the plan ($($plan.targets.Count) targets)"
+Step "4/6 act: the ROVs fly the plan ($($plan.targets.Count) targets)"
 Run-Sim "plan" $PlanRun @("--plan", $PlanFile)
 
 # ------------------------------------------------------------------ 5. learn
-Step "5/5 learn: detect the close-ups and close the missions"
+Step "5/6 learn: detect the close-ups and close the missions"
 Run-Vision $PlanRun
-Decision @("import", $PlanRun)
+Decision @("import", $PlanRun, "--grader", $Grader)
 Decision @("missions")
+Decision @("plan", "--grader", $Grader, "--out", (Join-Path $PlanRun "next_plan.json"))
+
+# ------------------------------------------------------------------ 6. score
+Step "6/6 score: plans and mission results vs ground truth"
+& $Py $Score $Out --db $Db
 
 # ------------------------------------------------------------------ summary
 Step "done"

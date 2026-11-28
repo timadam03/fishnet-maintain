@@ -1463,9 +1463,15 @@ while simulation_app.is_running():
         os.makedirs(os.path.dirname(out_png), exist_ok=True)
         Image.fromarray(data).save(out_png)
         lab = label(wp["theta"], wp["z"], wp.get("look_dist", STANDOFF))
+        # The heading the photo was really taken with (the plan's yaw if the robot got there), so the
+        # image pipeline can put each detection on its own cell (tools/run_vision.py).
+        q = np.asarray(quat[k], float)
+        yaw_now = math.atan2(2 * (q[0] * q[3] + q[1] * q[2]), 1 - 2 * (q[2] ** 2 + q[3] ** 2))
         rec = {"image": fname, "run_id": RUN_ID, "auv": k, "sim_time": round(t, 3), "band": wp["band"],
                "theta_deg": round(math.degrees(wp["theta"]) % 360, 2), "depth": wp["z"],
                "position": np.round(np.asarray(pos[k], dtype=float), 3).tolist(),
+               "yaw_deg": round(math.degrees(yaw_now), 2),
+               "look_dist": round(float(wp.get("look_dist", STANDOFF)), 3),
                "timeout": s["timeout"], **lab}
         if PLAN is not None:
             # The plan's cell, not ui_cell(theta): an offset viewpoint can sit over the next cell.

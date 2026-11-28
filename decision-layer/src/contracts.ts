@@ -49,11 +49,16 @@ export const VisionReport = z.object({
     .optional()
     .describe('How usable the image is; low values make the layer ask for a closer or slower look'),
   fouling_pct: unit.optional().describe('Share of the visible net covered by growth'),
+  cells_in_view: z
+    .array(cell)
+    .optional()
+    .describe('Every cell the photo shows: "looked, nothing there" counts for all of them, not just the capture cell'),
   detections: z.array(
     z.object({
       class: DetectionClass,
       confidence: unit,
       bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]).describe('[x, y, w, h] in pixels'),
+      cell: cell.optional().describe('Cell the detection itself is on (from its pixel position); default: the capture cell'),
       severity: z.enum(['low', 'medium', 'high']).optional(),
       size_m: z.number().min(0).optional().describe('Estimated size of the defect'),
       crop: z.string().optional(),

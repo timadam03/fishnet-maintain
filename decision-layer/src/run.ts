@@ -9,6 +9,8 @@
  *   npm run cli -- missions [status]           list missions for the robots
  *   npm run cli -- mission <id> <status> [result]  report a mission's progress, as a robot would
  *   npm run cli -- reset           clear reviews, closures, proposals, chat, log and missions
+ *   npm run cli -- import <run_dir> [--grader d1]   Isaac captures + vision reports → observations
+ *   npm run cli -- plan [--grader rules|d1] [--out plan.json]   what the robots should do next
  */
 import { modelStatus, openStore } from './app.ts';
 import { runCurator } from './curator.ts';
@@ -16,6 +18,7 @@ import { defaultDecisionModel } from './d1.ts';
 import { findingById, oxygenEventText, penDecisions, siteAlerts } from './engine.ts';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { gradeWithD1, d1Ask, regradeMissions } from './grade-d1.ts';
 import { buildPlan, importObservations } from './inspection.ts';
 import { ask } from './investigator.ts';
 import { missions, recordDay, trace, updateMission } from './log.ts';
@@ -122,12 +125,30 @@ async function main(): Promise<void> {
         grid,
       });
       console.log(`imported ${result.imported} observations; ${result.awaitingVision} captures have no vision report yet; ${result.unmatchedReports.length} reports had no capture`);
-      for (const m of result.missionsClosed) console.log(`mission #${m.missionId} done → ${m.result}`);
+      const penId = Number(flag('pen', String(ISAAC_PEN)));
+      const regraded = new Map<number, string>();
+      if (flag('grader', 'rules') === 'd1' && result.missionsClosed.length > 0) {
+        const d1 = await d1Ask(store);
+        if (!d1) console.log('d1: no AI_GATEWAY_API_KEY, missions closed by the rules only');
+        else for (const r of await regradeMissions(store, { penId, day: TODAY, ask: d1.ask, missionIds: result.missionsClosed.map((m) => m.missionId) })) regraded.set(r.missionId, r.result);
+      }
+      for (const m of result.missionsClosed) console.log(`mission #${m.missionId} done → ${regraded.get(m.missionId) ?? m.result}`);
       return;
     }
     case 'plan': {
       // plan [--pen 7] [--robots 3] [--out plan.json]: what the robots should do next
-      const plan = buildPlan(store, { penId: Number(flag('pen', String(ISAAC_PEN))), day: TODAY, robots: Number(flag('robots', '3')) });
+      const penId = Number(flag('pen', String(ISAAC_PEN)));
+      const grader = flag('grader', 'rules');
+      if (grader !== 'rules' && grader !== 'd1') throw new Error(`--grader must be rules or d1, got ${grader}`);
+      let grades;
+      if (grader === 'd1') {
+        const d1 = await d1Ask(store);
+        if (!d1) console.log('d1: no AI_GATEWAY_API_KEY in ../.env, so every cell is graded by the rules');
+        const g = await gradeWithD1(store, { penId, day: TODAY, ask: d1?.ask ?? null, model: d1?.model ?? null });
+        grades = g.grades;
+        console.log(`d1 (${g.model ?? 'none'}): graded ${g.asked} cells, ${g.grades.size - g.asked - g.fellBack.length} clean cells by the rules${g.fellBack.length ? `, ${g.fellBack.length} fell back to the rules (${g.fellBack[0].why})` : ''}`);
+      }
+      const plan = buildPlan(store, { penId, day: TODAY, robots: Number(flag('robots', '3')), grades });
       const out = flag('out', '');
       if (out) writeFileSync(out, JSON.stringify(plan, null, 2));
       for (const t of plan.targets) console.log(`${t.target_id} [${t.priority_label} ${t.priority}] cell ${t.cell} → AUV ${t.robots.join('+')}, ${t.scan.standoff_m} m, ${t.scan.viewpoints.length} view(s) × ${t.scan.shots}, margin ${t.safety.margin_m} m | ${t.reasons.slice(1).map((r) => r.rule).join('+')}: ${t.reasons[1].text}`);
@@ -147,7 +168,7 @@ async function main(): Promise<void> {
       console.log('cleared reviews, alert closures, proposals, chat, decision log and missions');
       return;
     default:
-      console.log('commands: demo | ask "<question>" | curator | accept <id> | record [day] | trace <entity> | missions [status] | mission <id> <assigned|done|cancelled> [result] | import <run_dir> [--pen N] [--vision file] | plan [--pen N] [--robots N] [--out file] | reset');
+      console.log('commands: demo | ask "<question>" | curator | accept <id> | record [day] | trace <entity> | missions [status] | mission <id> <assigned|done|cancelled> [result] | import <run_dir> [--pen N] [--vision file] [--grader d1] | plan [--pen N] [--robots N] [--grader rules|d1] [--out file] | reset');
       process.exitCode = 1;
   }
 }

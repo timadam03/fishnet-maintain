@@ -22,6 +22,13 @@ The whole loop (sweep, detect, decide, plan run) in one command, on the Windows 
 powershell -ExecutionPolicy Bypass -File abyss-sim\scripts\run_loop.ps1 -Isaac C:\isaacsim51 -Out C:\abyss_out\loop1
 ```
 
+To let the d1 decision model grade the net instead of the rules (`decision-layer/src/grade-d1.ts`;
+needs `AI_GATEWAY_API_KEY` in `.env`), rerun on the same sweep and compare the scores:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File abyss-sim\scripts\run_loop.ps1 -Isaac C:\isaacsim51 -Out C:\abyss_out\loop1 -SkipSweep -Grader d1
+```
+
 Quick start for the UI:
 
 ```bash
