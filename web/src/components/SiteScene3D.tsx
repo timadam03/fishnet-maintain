@@ -42,6 +42,10 @@ const smooth = (a: number, b: number, x: number): number => {
   return t * t * (3 - 2 * t);
 };
 const OVERVIEW_FOV = 34;
+/** After the nets (0) and drones (ROBOT_RENDER_ORDER), so the water lies over what is submerged. */
+const UNDERWATER_RENDER_ORDER = 3;
+/** How strongly the water over the farm tints submerged nets and drones. */
+const UNDERWATER_VEIL = 0.42;
 const SITE_DRONE_SCALE = 8;
 const SITE_LIGHT = { ambient: 1.8, sun: 1, sunPosition: new THREE.Vector3(-120, 260, 160) };
 const SITE_FOG = { color: env.haze, near: 1400, far: 4800 };
@@ -129,7 +133,31 @@ export default function SiteScene3D({ world, day, live, holes, openings, drones,
       new THREE.MeshBasicMaterial({ color: env.shallow, transparent: true, opacity: env.surfaceOpacity, depthWrite: false }),
     );
     surface.rotation.x = -Math.PI / 2;
+    // Drawn after everything under water (nets, drones, ropes), so they sit beneath the surface
+    // instead of on top of it. Parts above the waterline write depth and stay crisp.
+    surface.renderOrder = UNDERWATER_RENDER_ORDER;
     scene.add(surface);
+    // Over the farm, the water reads deeper: a soft disc of water colour tints the submerged nets
+    // and drones, fading out at its edge so no outline shows on the seabed.
+    const veilCanvas = document.createElement('canvas');
+    veilCanvas.width = veilCanvas.height = 256;
+    const veilCtx = veilCanvas.getContext('2d');
+    if (veilCtx) {
+      const g = veilCtx.createRadialGradient(128, 128, 0, 128, 128, 128);
+      g.addColorStop(0, 'rgba(255, 255, 255, 1)');
+      g.addColorStop(0.55, 'rgba(255, 255, 255, 0.85)');
+      g.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      veilCtx.fillStyle = g;
+      veilCtx.fillRect(0, 0, 256, 256);
+    }
+    const veil = new THREE.Mesh(
+      new THREE.PlaneGeometry(1400, 1000),
+      new THREE.MeshBasicMaterial({ color: env.water, alphaMap: new THREE.CanvasTexture(veilCanvas), transparent: true, opacity: UNDERWATER_VEIL, depthWrite: false }),
+    );
+    veil.rotation.x = -Math.PI / 2;
+    veil.position.set(-20, 0.05, 0);
+    veil.renderOrder = UNDERWATER_RENDER_ORDER;
+    scene.add(veil);
 
 
     // Pens: textured net, collar, mooring frame.
@@ -143,6 +171,7 @@ export default function SiteScene3D({ world, day, live, holes, openings, drones,
     // The surroundings too (-2): inside a pen the view is open water, as in the pen view.
     addFade(-2, terrain);
     addFade(-2, surface);
+    addFade(-2, veil);
     world.pens.forEach((_, i) => {
       const pos = penPosition(world, i);
       const canvas = document.createElement('canvas');
