@@ -28,6 +28,26 @@ beats in `docs/demo-spec.md` §1 (branch `feat/decision-layer`). The seams betwe
 
 **What "act" means in this demo:** the robots re-task their inspection. They go somewhere else, closer, from another angle, for more shots or with a second robot. Repairs, cleaning and farm actions stay recommendations that a person approves, as in the decision layer README.
 
+## After the close-ups: does a person need to look? (`decision-layer/src/escalate.ts`)
+
+Commands, demo run and troubleshooting: [`escalation.md`](escalation.md).
+
+```
+ close-ups back ─▶ d1 #2 per closed mission ─▶ critical ──▶ report agent drafts a report ─▶ engineer: approve / edit / reject
+ (mission closed)   critical? engineer?       human review ─▶ review card with the photos ─┘
+                    photos enough?            re-inspect (max 2 missions per cell), monitor, closed
+                                                         │
+     every reviewed case ─▶ export-cases (tagged FARM_ID) ─▶ other farms: import-cases
+       photos + detector output + d1 #1/#2 answers + engineer verdict + draft and final report
+```
+
+1. **d1 #2** (`npm run cli -- escalate <run_dir> --grader d1`). One d1 call per closed mission, on that mission's own close-ups, with four yes/no questions: `critical` (fish could escape, or repair within 24 h), `needs_human`, `sufficient` (enough to plan a repair) and `recurring`. Code sets the thresholds (`decideFromAnswers`). d1 can raise a case to an engineer, but it can't close an opening the rules confirmed from two viewpoints: that always reaches a person. Without a key, or if d1 fails, the rules decide (`decideByRules`) and the reason says so.
+2. **Report agent** (`report.ts`, `AGENT_MODEL`). Only for critical cases. Code writes the facts (decision, location, d1 answers, size, photos and detector overlays); the agent writes the summary, what the robots saw, open questions and the recommended action, and anything else it sends is dropped. Without an agent model the report is a template and says so. Reports go to `<run_dir>/reports/case_<n>_m<id>.md`.
+3. **Engineer** (`review`, or `POST /api/escalations/:case/review` for the dashboard). `approve` = real defect, `edit <file>` = real, with the engineer's own report, `reject` = false alarm. Engineers can also review a case that closed without them: that is a missed defect, the most useful label.
+4. **Multi-farm data** (`export-cases`, `import-cases`). One JSONL line per case. Imported cases do two things here: d1 #2 sees how engineers judged earlier cases the rules called the same thing ("5 reviewed, 4 real"), and the report agent gets the engineers' latest corrections of drafts as examples. The same files are the training set for a better detector (photos with engineer labels) and for the report writer (draft vs final). `review` prints how often engineers agreed with the escalation.
+
+The case library survives `reset` (each case is keyed on farm, sim run and mission, so new runs never collide with old cases); `forget-cases` clears it.
+
 ## What exists and what is missing
 
 | Step | Where | Status |

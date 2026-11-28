@@ -6,6 +6,8 @@ run_loop.ps1 -- the closed loop on the Windows GPU machine, in one command.
   3. decide   decision layer: grade every cell, write the plan     -> run_sweep\plan_<grader>.json
   4. act      Isaac Sim: fly the plan (closer, other angles)       -> <Out>\run_plan_<grader>
   5. learn    detect the new photos and import them: missions close with results
+              escalate: d1 #2 (or the rules) on each mission's close-ups: critical? engineer?
+              critical cases get a drafted report with the photos -> run_plan_<grader>\reports
   6. score    the plan and the mission results against the sim's ground truth
 
   powershell -ExecutionPolicy Bypass -File abyss-sim\scripts\run_loop.ps1 -Isaac C:\isaacsim51 -Out C:\abyss_out\loop2
@@ -153,6 +155,9 @@ Step "5/6 learn: detect the close-ups and close the missions"
 Run-Vision $PlanRun
 Decision @("import", $PlanRun, "--grader", $Grader)
 Decision @("missions")
+# Second decision: on the close-ups, is it critical, and does an engineer need to look?
+Decision @("escalate", $PlanRun, "--grader", $Grader)
+Decision @("review")
 Decision @("plan", "--grader", $Grader, "--out", (Join-Path $PlanRun "next_plan.json"))
 
 # ------------------------------------------------------------------ 6. score
@@ -178,6 +183,7 @@ foreach ($run in @($Sweep, $PlanRun)) {
 }
 Write-Host "Plan:      $PlanFile"
 Write-Host "Overlays:  $(Join-Path $Sweep 'overlays')  and  $(Join-Path $PlanRun 'overlays')"
+Write-Host "Reports:   $(Join-Path $PlanRun 'reports')  (review: npm run cli -- review <case> approve|reject|edit <file>)"
 if ($Record) {
   Write-Host "Video:     $(Join-Path $Out "abyss_loop_$Grader.mp4")  (the whole loop)"
   Write-Host "           and the separate runs in $Out\rec_sweep, $Out\rec_plan_$Grader"

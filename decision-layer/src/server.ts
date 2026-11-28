@@ -9,6 +9,7 @@ import { modelStatus, openStore } from './app.ts';
 import { runCurator } from './curator.ts';
 import { defaultDecisionModel } from './d1.ts';
 import { findingById, oxygenEventText, penDecisions, siteAlerts } from './engine.ts';
+import { agreement, caseByNo, cases, reviewCase } from './escalate.ts';
 import { buildPlan, importObservations } from './inspection.ts';
 import { ask } from './investigator.ts';
 import { logEntries, missions, recordDay, trace, updateMission } from './log.ts';
@@ -147,6 +148,30 @@ async function route(req: IncomingMessage, url: URL): Promise<unknown> {
   if (method === 'POST' && m) {
     const b = await body(req, z.object({ decision: z.enum(['accepted', 'rejected']) }));
     return store.decideProposal(Number(m[1]), b.decision);
+  }
+  if (method === 'GET' && path === '/api/escalations') {
+    // The engineer's queue: ?status=pending (default), all, approved, edited, rejected, not_needed.
+    const status = z.enum(['pending', 'not_needed', 'approved', 'edited', 'rejected', 'all']).safeParse(url.searchParams.get('status') ?? 'pending');
+    if (!status.success) throw new HttpError(400, 'status must be pending, not_needed, approved, edited, rejected or all');
+    return { cases: cases(store, status.data === 'all' ? {} : { reviewStatus: status.data }), agreement: agreement(store) };
+  }
+  m = path.match(/^\/api\/escalations\/(\d+)$/);
+  if (method === 'GET' && m) {
+    try {
+      return caseByNo(store, Number(m[1]));
+    } catch (error) {
+      throw new HttpError(404, (error as Error).message);
+    }
+  }
+  m = path.match(/^\/api\/escalations\/(\d+)\/review$/);
+  if (method === 'POST' && m) {
+    // The engineer's verdict; final_report_md is the report as they filed it (edits are kept).
+    const b = await body(req, z.object({ verdict: z.enum(['real', 'false_alarm']), reviewer: z.string().max(80).optional(), note: z.string().max(1000).optional(), final_report_md: z.string().max(50000).optional() }));
+    try {
+      return reviewCase(store, Number(m[1]), { verdict: b.verdict, reviewer: b.reviewer, note: b.note, finalReportMd: b.final_report_md });
+    } catch (error) {
+      throw new HttpError(/unknown case/.test((error as Error).message) ? 404 : 400, (error as Error).message);
+    }
   }
   if (method === 'POST' && path === '/api/reset') {
     store.reset();
