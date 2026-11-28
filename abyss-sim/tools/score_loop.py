@@ -19,6 +19,22 @@ import json
 import math
 import os
 import sqlite3
+import sys
+
+
+class Tee:
+    """Writes to the console and a file at once."""
+
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, text):
+        for s in self.streams:
+            s.write(text)
+
+    def flush(self):
+        for s in self.streams:
+            s.flush()
 
 
 def covered_cells(patches, grid):
@@ -47,7 +63,10 @@ def main():
     ap.add_argument("loop_dir")
     ap.add_argument("--db", help="shoal.db, to score the mission results of the last plan run too")
     ap.add_argument("--top", type=int, default=5, help="how many of the first targets count as 'first look'")
+    ap.add_argument("--save", help="also write the report to this file (UTF-8), e.g. for make_loop_video.py")
     args = ap.parse_args()
+    if args.save:
+        sys.stdout = Tee(sys.stdout, open(args.save, "w", encoding="utf-8"))
 
     sweep = os.path.join(args.loop_dir, "run_sweep")
     with open(os.path.join(sweep, "ground_truth.json")) as f:

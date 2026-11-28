@@ -161,7 +161,13 @@ Copy-Item $Db (Join-Path $PlanRun "shoal.db") -Force
 
 # ------------------------------------------------------------------ 6. score
 Step "6/6 score: plans and mission results vs ground truth"
-& $Py $Score $Out --db $Db
+& $Py $Score $Out --db $Db --save (Join-Path $PlanRun "score.txt")
+
+# ------------------------------------------------------------------ the whole loop as one video
+if ($Record) {
+  Step "video: survey -> detector -> plan -> close-ups -> results, in one file"
+  & $IsaacPy (Join-Path $SimRoot "tools\make_loop_video.py") $Out --grader $Grader --db $Db
+}
 
 # ------------------------------------------------------------------ summary
 Step "done"
@@ -176,7 +182,10 @@ foreach ($run in @($Sweep, $PlanRun)) {
 }
 Write-Host "Plan:      $PlanFile"
 Write-Host "Overlays:  $(Join-Path $Sweep 'overlays')  and  $(Join-Path $PlanRun 'overlays')"
-if ($Record) { Write-Host "Videos:    $Out\rec_sweep, $Out\rec_plan_$Grader (the .mp4 files in each)" }
+if ($Record) {
+  Write-Host "Video:     $(Join-Path $Out "abyss_loop_$Grader.mp4")  (the whole loop)"
+  Write-Host "           and the separate runs in $Out\rec_sweep, $Out\rec_plan_$Grader"
+}
 if ($Runthrough) {
   Step "runthrough: the whole loop as one demo video"
   & $IsaacPy $MakeRunthrough $Out --grader $Grader
