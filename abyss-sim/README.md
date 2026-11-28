@@ -21,6 +21,7 @@ sim/safe_nav.py               HOCBF filter (numpy), sonar-style rays, policy run
 sim/plan_mode.py              decision-layer plan.json -> waypoints (numpy), for --plan
 tests/test_plan_mode.py       laptop tests for plan_mode.py (no Isaac Sim needed)
 tools/make_video.py           draws the overlays and encodes the MP4 videos
+tools/make_runthrough.py      the whole closed loop as one demo video (sweep, classifier, decisions, plan run, results)
 training/train_fishfarm_nav.py  optional: retrain the PPO navigator (run in the SJTU repo)
 scripts/run_cluster.sh        one-command headless run on a GPU server
 scripts/slurm_record.sbatch   example SLURM job
@@ -101,6 +102,33 @@ scp -r "user@cluster:~/abyss_out/run_plan" . && npm run stand-in-vision -- run_p
 ```
 Laptop tests for the plan logic: `uv run --with numpy --with pytest pytest tests`.
 The Isaac side of `--plan` (moving, margins, turns, shots) has not been run on a GPU yet.
+
+## The demo video of the whole loop
+`tools/make_runthrough.py` turns one loop folder (`run_loop.ps1 -Out`) into a single 1080p MP4, in
+five chapters with a title card each:
+
+1. **Sweep:** the ROVs survey the whole net from a distance. Overview, cutaway and the three ROV cameras.
+2. **Classifier:** each photo is "processed" live, wiping from the raw photo to the detector's
+   overlay plus a detection heat. Beside it, a map of the net fills in with what was found where.
+3. **Decision layer:** the ranked targets appear one by one on that map, each with its rule
+   (P1-P6), the reason, and the orders: which ROVs, how close, how many angles and shots, what margin.
+4. **The robots act:** the plan-run recording. Targets are marked in the overview, and a line and
+   a caption show which target each ROV is heading to.
+5. **Results:** the best close-up per target, the photos per ROV, and what each mission
+   concluded. Then a summary card with the next plan.
+
+```powershell
+# as part of the loop (needs -Record for the robot recordings)
+powershell -ExecutionPolicy Bypass -File abyss-sim\scripts\run_loop.ps1 -Isaac C:\isaacsim51 -Out C:\abyss_out\demo -Record -Runthrough
+# or afterwards, on any finished loop folder
+C:\isaacsim51\python.bat abyss-sim\tools\make_runthrough.py C:\abyss_out\demo --grader rules
+```
+- **Output:** `<loop>\runthrough_<grader>.mp4`.
+- **Python:** needs numpy, Pillow and ffmpeg, like `make_video.py`. Isaac's python works; OpenCV isn't needed.
+- **Without `-Record`,** chapters 1 and 4 show the photos in the order they were taken.
+- **Mission results** come from the database snapshot `run_loop.ps1` leaves in `run_plan_<grader>\shoal.db`, or from `--db`. A result is used only if the mission's cells match the target, because every loop resets the database.
+- **Tuning:** `--speed` (robot playback, default 4x), `--max-photos`, `--chapters 2,3` to re-render some chapters, and `--res 1280x720` for a quick preview.
+- **Only the loop's own outputs are shown.** The classifier chapter draws what `vision.jsonl` reported, which is what the decision layer received, never the sim's ground truth.
 
 ## Local (Windows, with a window)
 ```powershell
