@@ -29,6 +29,13 @@ needs `AI_GATEWAY_API_KEY` in `.env`), rerun on the same sweep and compare the s
 powershell -ExecutionPolicy Bypass -File abyss-sim\scripts\run_loop.ps1 -Isaac C:\isaacsim51 -Out C:\abyss_out\loop1 -SkipSweep -Grader d1
 ```
 
+For the final demo, the whole loop as one video (sweep, classifier, decisions, the robots acting,
+results), see [`docs/demo-runthrough.md`](docs/demo-runthrough.md):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File abyss-sim\scripts\run_loop.ps1 -Isaac C:\isaacsim51 -Out C:\abyss_out\demo -Record -Runthrough
+```
+
 Quick start for the UI:
 
 ```bash

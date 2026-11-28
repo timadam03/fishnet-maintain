@@ -104,7 +104,8 @@ Laptop tests for the plan logic: `uv run --with numpy --with pytest pytest tests
 The Isaac side of `--plan` (moving, margins, turns, shots) has not been run on a GPU yet.
 
 ## The demo video of the whole loop
-`tools/make_runthrough.py` turns one loop folder (`run_loop.ps1 -Out`) into a single 1080p MP4, in
+Full guide: [`docs/demo-runthrough.md`](../docs/demo-runthrough.md) (options, smoother video,
+checklist, troubleshooting). `tools/make_runthrough.py` turns one loop folder (`run_loop.ps1 -Out`) into a single 1080p MP4, in
 five chapters with a title card each:
 
 1. **Sweep:** the ROVs survey the whole net from a distance. Overview, cutaway and the three ROV cameras.
@@ -128,6 +129,8 @@ C:\isaacsim51\python.bat abyss-sim\tools\make_runthrough.py C:\abyss_out\demo --
 - **Without `-Record`,** chapters 1 and 4 show the photos in the order they were taken.
 - **Mission results** come from the database snapshot `run_loop.ps1` leaves in `run_plan_<grader>\shoal.db`, or from `--db`. A result is used only if the mission's cells match the target, because every loop resets the database.
 - **Tuning:** `--speed` (robot playback, default 4x), `--max-photos`, `--chapters 2,3` to re-render some chapters, and `--res 1280x720` for a quick preview.
+- **Smoother robot video:** record more frames with `run_loop.ps1 ... -Record -RecordEvery 1` (60 fps), then render with a lower `--speed` or `--fps 60`.
+- **Loops from before this branch:** pass `--db <repo>\shoal.db`.
 - **Only the loop's own outputs are shown.** The classifier chapter draws what `vision.jsonl` reported, which is what the decision layer received, never the sim's ground truth.
 
 ## Local (Windows, with a window)

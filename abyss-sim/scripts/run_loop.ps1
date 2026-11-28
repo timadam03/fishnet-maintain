@@ -30,6 +30,7 @@ param(
   [int]$Seed = 7,                     # --defect-seed: which net (holes, thinning, fouling)
   [switch]$Lite,                      # 640x360, faster: for checking the loop works
   [switch]$Record,                    # also record videos of both runs (slower)
+  [int]$RecordEvery = 2,              # with -Record: save every N physics steps (2 = 30 fps, 1 = 60 fps, smoother)
   [switch]$KeepMemory,                # don't reset the decision layer first
   [switch]$SkipSweep,                 # reuse <Out>\run_sweep and start from the detect step
   [switch]$Runthrough,                # render the demo video of the whole loop at the end
@@ -95,7 +96,8 @@ if ($Lite) { $Scene += "--lite" }
 function Run-Sim([string]$name, [string]$outDir, [string[]]$extra = @()) {
   $simArgs = @($Demo) + $Scene + $extra + @("--out", $outDir)
   if ($Record) {
-    $simArgs += @("--record", (Join-Path $Out "rec_$name"), "--record-cams", "demo,section,auv0,auv1,auv2")
+    $simArgs += @("--record", (Join-Path $Out "rec_$name"), "--record-cams", "demo,section,auv0,auv1,auv2",
+                  "--record-every", "$RecordEvery")
   }
   & $IsaacPy @simArgs
   # Isaac Sim can crash on shutdown after a good run, so judge by the files it wrote, not its exit code.
