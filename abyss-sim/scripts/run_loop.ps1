@@ -29,7 +29,10 @@ param(
   [switch]$KeepMemory,                # don't reset the decision layer first
   [switch]$SkipSweep,                 # reuse <Out>\run_sweep and start from the detect step
   [ValidateSet("rules", "d1")]
-  [string]$Grader = "rules"           # who grades the cells: the plan rules, or the d1 model
+  [string]$Grader = "rules",          # who grades the cells: the plan rules, or the d1 model
+  [switch]$Gui,                       # show the Isaac Sim window while it runs (watch it live)
+  [ValidateSet("orbit", "section", "auv0", "auv1", "auv2")]
+  [string]$View = "orbit"             # with -Gui: which camera the window shows
 )
 
 # Every step is checked explicitly below. Not "Stop": in Windows PowerShell 5.1 that turns any
@@ -83,7 +86,10 @@ New-Item -ItemType Directory -Force -Path $Out | Out-Null
 Write-Host "Isaac Sim: $Isaac | detector Python: $Py | Node $nodeMajor | grader: $Grader | output: $Out"
 
 # Same scene for the sweep and the plan run: these flags place the ropes and the net defects.
-$Scene = @("--headless", "--safe-nav", "--obstacles", "$Obstacles", "--defect-seed", "$Seed", "--full-coverage")
+$Scene = @("--safe-nav", "--obstacles", "$Obstacles", "--defect-seed", "$Seed", "--full-coverage")
+# -Gui: the window stays up while the robots work and closes by itself after each run, so the loop
+# carries on. Don't close it early: the run would end without its photos.
+if ($Gui) { $Scene += @("--close-when-done", "--view", $View) } else { $Scene += "--headless" }
 if ($Lite) { $Scene += "--lite" }
 
 function Run-Sim([string]$name, [string]$outDir, [string[]]$extra = @()) {

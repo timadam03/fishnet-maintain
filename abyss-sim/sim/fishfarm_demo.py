@@ -65,6 +65,8 @@ parser.add_argument("--hq", action="store_true",
 parser.add_argument("--out", default="fence_captures")
 parser.add_argument("--no-fish", action="store_true")
 parser.add_argument("--headless", action="store_true")
+parser.add_argument("--close-when-done", action="store_true",
+                    help="with the GUI: close 8 s after the inspection ends (as headless does), e.g. inside run_loop.ps1")
 parser.add_argument("--record", default=None,
                     help="save video frames + telemetry to this folder (works headless; then run make_video.py)")
 parser.add_argument("--record-cams", default="demo,section,auv0,auv1,auv2",
@@ -1021,10 +1023,16 @@ if args.preview:
 
 # ----------------------------------------------------------------------------- capture
 annots, uw_cams, rps = [], [], []
+# Vehicle cameras that --record films. Replicator hands the recorder the same render product the
+# photos use (same camera, same resolution), so switching it off would freeze the video too.
+REC_AUVS = {int(c.strip()[-1]) for c in args.record_cams.split(",")
+            if c.strip().startswith("auv")} if args.record else set()
 
 
 def set_cam_rendering(k, on):
-    """Vehicle cameras only render while a photo is being taken (saves most of the GPU load)."""
+    """Vehicle cameras only render while a photo is being taken (saves most of the GPU load),
+    except the ones being recorded, which render every frame."""
+    on = on or k in REC_AUVS
     if k < len(rps) and rps[k] is not None:
         try:
             rps[k].hydra_texture.set_updates_enabled(on)
@@ -1385,7 +1393,7 @@ while simulation_app.is_running():
     if not world.is_playing():
         continue
     t = sim_t[0]
-    if (args.record or args.headless) and finish_t is not None and t - finish_t > 8.0:
+    if (args.record or args.headless or args.close_when_done) and finish_t is not None and t - finish_t > 8.0:
         break                                   # headless / recording: stop 8 s after the inspection ends
     update_fish(t)
     update_demo_cam(t)

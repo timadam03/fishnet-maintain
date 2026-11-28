@@ -1,5 +1,7 @@
 # Closed loop: the robots act on the decision layer
 
+**Update 2026-11-28 (late): every step below now runs end to end on the GPU box (real detector, d1 grader, one-command loop with video). Current state, how to run and next steps: [`CLAUDE.md`](../CLAUDE.md). The status table below is from before that.**
+
 Status: direction set 2026-11-28. This is the story the demo tells now. It replaces the oxygen-led
 beats in `docs/demo-spec.md` §1 (branch `feat/decision-layer`). The seams between the parts are specified in
 `docs/contracts.md` (branch `feat/decision-layer`, which predates plan mode: where the two differ, this doc wins); this doc says what the loop is, what exists and what is still missing.
