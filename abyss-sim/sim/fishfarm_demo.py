@@ -117,7 +117,7 @@ parser.add_argument("--plan-revisits", type=int, default=0,
 parser.add_argument("--plan-coverage", type=int, default=0,
                     help="after the targets, sweep this many of the plan's coverage cells (stalest first) at --standoff")
 parser.add_argument("--wp-timeout", type=float, default=None,
-                    help="seconds to reach a waypoint before photographing anyway (default 20, 40 with --plan)")
+                    help="seconds to reach a waypoint before photographing anyway (default 20, 90 with --plan)")
 args, _ = parser.parse_known_args()
 
 # SimulationApp must be created before any other omni / isaacsim import
@@ -188,9 +188,10 @@ FOCAL, H_APERTURE = 18.0, 20.955
 V_APERTURE = H_APERTURE * RES[1] / RES[0]
 SETTLE_POS, SETTLE_YAW, SETTLE_SPEED = 0.15, math.radians(4.0), 0.08
 SETTLE_FRAMES = 30
-# A plan sends robots across the pen between targets, with the filter slowing them: allow longer.
-# 40 s is a starting value to tune on the GPU, not a measured transit time.
-WP_TIMEOUT = args.wp_timeout or (40.0 if args.plan else 20.0)
+# A plan sends robots across the pen between targets, round the ropes, and sometimes has one wait for
+# another to clear a spot next to its own: allow longer. In an offline replay of the control loop on
+# three real plans, 40 s still cut off 2 spots in two of them and 90 s cut off none.
+WP_TIMEOUT = args.wp_timeout or (90.0 if args.plan else 20.0)
 
 LAMP_INTENSITY = 1.5e6    # vehicle spotlights -- tweak if too bright/dark
 # Real net-inspection footage is a lit net against flat, dark water: everything past the net is
@@ -1021,10 +1022,16 @@ if args.preview:
 
 # ----------------------------------------------------------------------------- capture
 annots, uw_cams, rps = [], [], []
+# Vehicle cameras that --record films. Replicator hands the recorder the same render product the
+# photos use (same camera, same resolution), so switching it off would freeze the video too.
+REC_AUVS = {int(c.strip()[-1]) for c in args.record_cams.split(",")
+            if c.strip().startswith("auv")} if args.record else set()
 
 
 def set_cam_rendering(k, on):
-    """Vehicle cameras only render while a photo is being taken (saves most of the GPU load)."""
+    """Vehicle cameras only render while a photo is being taken (saves most of the GPU load),
+    except the ones being recorded, which render every frame."""
+    on = on or k in REC_AUVS
     if k < len(rps) and rps[k] is not None:
         try:
             rps[k].hydra_texture.set_updates_enabled(on)
@@ -1126,6 +1133,11 @@ def enter_waypoint(k, t, pos_k):
     elif not s["wait"]:
         s.update(wait=True, hold=np.asarray(pos_k, dtype=float).copy())
         print(f"[plan] auv_{k}: waiting for auv_{LOCKS[tid]} to finish target {tid}")
+
+
+# A plan sends robots across the pen, so they need a way round the ropes, not just a filter that stops
+# them at one. It uses the rope map, so not in --perception mode. The coverage sweep needs none.
+ROUTERS = [pm.Router(OBSTACLES, CAGE_R) for _ in range(N_AUV)] if PLAN and NAV and not args.perception else None
 prev_q = [None] * N_AUV
 sim_t = [0.0]
 for k in range(N_AUV):
@@ -1203,6 +1215,13 @@ def physics_step(dt):
             p2 = np.asarray(pos[k], float)[:2]
             v2 = v[:2] - CURRENT[:2]                                  # velocity relative to water
             g = p_ref[:2]
+            sk = state[k]
+            margin = NCFG["inflation"]
+            if PLAN is not None and not sk["done"] and not sk["wait"]:
+                margin = plans[k][sk["wp"]].get("margin", margin)    # this target's HOCBF margin
+            to_go = np.linalg.norm(g - p2)
+            if ROUTERS is not None:                                   # steer for a point on the way round
+                g = ROUTERS[k].aim(sim_t[0], p2, g, margin, [pos[j][:2] for j in range(N_AUV) if j != k])
             # dynamic agents (other ROVs, diver) with velocity -> moving-obstacle HOCBF
             dyn = [(pos[j][0], pos[j][1], NCFG["vehicle_radius"], vel[j][0], vel[j][1])
                    for j in range(N_AUV) if j != k]
@@ -1218,7 +1237,7 @@ def physics_step(dt):
                 static = rows5(OBSTACLES)
             circles = np.vstack([static, dyn])
             truth = np.vstack([rows5(OBSTACLES), dyn])               # for logging true clearance
-            far = np.linalg.norm(g - p2) > NAV_SWITCH
+            far = to_go > NAV_SWITCH
             if POLICY is not None and far:
                 if ns["tick"] % POLICY_EVERY == 0:
                     ns["u"] = POLICY(sn.build_obs(p2, v2, g, truth, CAGE_R, NCFG["n_rays"], NCFG["ray_max"]))
@@ -1229,10 +1248,7 @@ def physics_step(dt):
             ns["tick"] += 1
             if SAFETY is not None:
                 if PLAN is not None:                                  # this target's margin, raised only as the ROV clears it
-                    sk = state[k]
-                    want = NCFG["inflation"] if sk["done"] or sk["wait"] else \
-                        plans[k][sk["wp"]].get("margin", NCFG["inflation"])
-                    SAFETY[k].inflation = pm.ramp_margin(SAFETY[k].inflation, want,
+                    SAFETY[k].inflation = pm.ramp_margin(SAFETY[k].inflation, margin,
                                                          sn.clearance(p2, circles, CAGE_R, 0.0))
                 u, info = SAFETY[k].filter(p2, v2, u_nom, circles, escape=ESCAPE)
                 ns["interv"] = info["intervened"]
@@ -1243,7 +1259,7 @@ def physics_step(dt):
             Fc[0] = MASS * a_h[0] - Fd[0]
             Fc[1] = MASS * a_h[1] - Fd[1]
             Fc[2] = float(np.clip(KP * e[2] - KD * v[2], -F_MAX, F_MAX))
-            if far and np.linalg.norm(g - p2) > 1.5:                   # face the direction of travel
+            if far and to_go > 1.5:                                    # face the direction of travel
                 yaw_ref = math.atan2(g[1] - p2[1], g[0] - p2[0])
             clr = sn.clearance(p2, truth, CAGE_R, NCFG["vehicle_radius"])
             ns["min_clr"] = min(ns["min_clr"], clr)
@@ -1282,7 +1298,8 @@ if args.record:
             settings.set(key, val)
     W, H = (int(v) for v in args.record_res.lower().split("x"))
     from concurrent.futures import ThreadPoolExecutor
-    REC = {"dir": args.record, "cams": {}, "frame": 0, "shots": [], "pool": ThreadPoolExecutor(max_workers=6)}
+    REC = {"dir": args.record, "cams": {}, "frame": 0, "shots": [], "pool": ThreadPoolExecutor(max_workers=6),
+           "last": {}, "blank": 0}
     for name in [c.strip() for c in args.record_cams.split(",") if c.strip()]:
         path = {"demo": "/World/DemoCam", "section": "/World/SectionCam"}.get(name) or cam_paths[int(name[-1])]
         res = (W, H) if name in ("demo", "section") else RES
@@ -1307,6 +1324,13 @@ if args.record:
     print(f"[rec] recording {list(REC['cams'])} to {os.path.abspath(args.record)} at {60 / args.record_every:.0f} fps")
 
 
+def blank(frame):
+    """One single colour all over: the renderer dropped the scene (all black, or only the background).
+    Seen on the vehicle cameras while recording. This exact test relies on the default anti-aliasing:
+    TAA mixes earlier frames in, so a dropped frame no longer comes out as one colour."""
+    return bool((frame == frame[0, 0]).all())
+
+
 def _save_png(frame, path):
     Image.fromarray(frame).save(path, compress_level=1)          # fast PNG; written off the sim thread
 
@@ -1321,6 +1345,9 @@ def record_frame(t, pos):
         if data is None or getattr(data, "size", 0) == 0:
             return
         frame = np.array(np.asarray(data)[:, :, :3], copy=True)   # copy: the buffer is reused next frame
+        if blank(frame) and name in REC["last"]:               # hold the last picture, don't flash
+            frame, REC["blank"] = REC["last"][name], REC["blank"] + 1
+        REC["last"][name] = frame
         REC["pool"].submit(_save_png, frame, os.path.join(REC["dir"], name, f"{idx:05d}.png"))
     rov = []
     for k in range(N_AUV):
@@ -1450,6 +1477,10 @@ while simulation_app.is_running():
             s["cam_wait"] -= 1
             continue
         data = grab(k)
+        if data is not None and blank(data) and s.get("blank", 0) < 300:
+            s["blank"] = s.get("blank", 0) + 1       # not a photo: try the next frame
+            continue
+        s["blank"] = 0
         if data is None:
             continue
         set_cam_rendering(k, False)
@@ -1524,5 +1555,7 @@ if REC is not None:
     REC["tel"].close()
     print("[rec] finishing frame writes...")
     REC["pool"].shutdown(wait=True)
+    if REC["blank"]:
+        print(f"[rec] {REC['blank']} blank camera frames replaced by the one before")
     print(f"[rec] done: {os.path.abspath(args.record)}  ->  run tools/make_video.py on it")
 simulation_app.close()

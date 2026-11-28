@@ -17,6 +17,7 @@ How a target is flown:
 """
 from __future__ import annotations
 
+import heapq
 import json
 import math
 
@@ -122,6 +123,94 @@ def drop_blocked(waypoints, obstacles, slack=0.2):
         ok = all(math.hypot(w["pos"][0] - x, w["pos"][1] - y) > r + w["margin"] + slack for x, y, r in obstacles)
         (kept if ok else blocked).append(w)
     return kept, blocked
+
+
+class Router:
+    """The way around the ropes and the other robots, one per robot.
+
+    The HOCBF filter only stops a robot from getting too close: steering straight at a goal behind a
+    rope, it parks in front of the rope until the waypoint times out. This finds a path on a grid of
+    the pen's horizontal plane and gives the controller a point a short way along it to steer for.
+    The filter still has the last word on safety.
+    """
+    CELL = 0.2          # [m] grid spacing
+    SLACK = 0.1         # [m] the path keeps this much more than the HOCBF margin
+    LOOKAHEAD = 1.2     # [m] how far along the path to steer
+    REPLAN = 0.5        # [s] the other robots move, so the path is refreshed
+    ROBOT_R = 0.35      # [m] another robot's radius
+
+    def __init__(self, obstacles, net_radius):
+        self.obstacles = np.asarray(obstacles, float).reshape(-1, 3)
+        self.net_radius = net_radius
+        n = int(math.ceil(net_radius / self.CELL))
+        self.axis = np.arange(-n, n + 1) * self.CELL
+        self.x, self.y = np.meshgrid(self.axis, self.axis, indexing="ij")
+        self.path, self.key, self.planned_at = None, None, -math.inf
+
+    def aim(self, t, pos, goal, margin, others=()):
+        """The point to steer for now: `goal` itself once nothing is in the way."""
+        pos, goal = np.asarray(pos, float)[:2], np.asarray(goal, float)[:2]
+        key = (round(float(goal[0]), 2), round(float(goal[1]), 2), margin)
+        if key != self.key or t - self.planned_at >= self.REPLAN:
+            self.key, self.planned_at = key, t
+            circles = [(x, y, r + margin + self.SLACK) for x, y, r in self.obstacles]
+            robots = [(p[0], p[1], self.ROBOT_R + margin + self.SLACK) for p in others]
+            # A robot sitting on the goal cannot be routed around: head for it anyway and let the
+            # HOCBF hold this one off until the spot is free.
+            self.circles = circles + [c for c in robots if math.hypot(goal[0] - c[0], goal[1] - c[1]) > c[2]]
+            self.wall = max(self.net_radius - margin - self.SLACK / 2, float(np.linalg.norm(goal)))
+            self.path = None if self._clear(pos, goal) else self._search(pos, goal)
+        if self.path is None:
+            return goal
+        i = int(np.argmin(np.linalg.norm(self.path - pos, axis=1)))
+        best = self.path[min(i + 1, len(self.path) - 1)]
+        for p in self.path[i + 1:]:
+            if np.linalg.norm(p - pos) > self.LOOKAHEAD or not self._clear(pos, p):
+                break
+            best = p
+        return best
+
+    def _clear(self, a, b):
+        """Is the straight line a -> b outside every keep-out? A start already inside one only has
+        to not go deeper into it."""
+        d = b - a
+        dd = float(d @ d)
+        for x, y, r in self.circles:
+            c = np.array([x, y])
+            s = 0.0 if dd == 0 else min(1.0, max(0.0, float((c - a) @ d) / dd))
+            if np.linalg.norm(a + s * d - c) < min(r, np.linalg.norm(a - c)) - 1e-6:
+                return False
+        return np.linalg.norm(b) <= max(self.wall, np.linalg.norm(a)) + 1e-6
+
+    def _search(self, start, goal):
+        """A* from start to goal. Cells inside a keep-out cost much more instead of being closed, so
+        a robot that starts inside one (or a goal that has no clear way in) still gets a path."""
+        cost = np.where(np.hypot(self.x, self.y) > self.wall, 50.0, 1.0)
+        for x, y, r in self.circles:
+            cost[np.hypot(self.x - x, self.y - y) < r] = 50.0
+        n = len(self.axis)
+        index = lambda p: tuple(int(v) for v in np.clip(np.round(p / self.CELL) + n // 2, 0, n - 1))
+        s, g = index(start), index(goal)
+        cost = cost.tolist()
+        steps = [(i, j, math.hypot(i, j)) for i in (-1, 0, 1) for j in (-1, 0, 1) if i or j]
+        best, came, queue = {s: 0.0}, {}, [(0.0, s)]
+        while queue:
+            _, c = heapq.heappop(queue)
+            if c == g:
+                break
+            for i, j, length in steps:
+                m = (c[0] + i, c[1] + j)
+                if not (0 <= m[0] < n and 0 <= m[1] < n):
+                    continue
+                total = best[c] + length * cost[m[0]][m[1]]
+                if total < best.get(m, math.inf):
+                    best[m], came[m] = total, c
+                    heapq.heappush(queue, (total + math.hypot(m[0] - g[0], m[1] - g[1]), m))
+        cells = [g]
+        while cells[-1] in came:
+            cells.append(came[cells[-1]])
+        pts = [np.array([self.axis[i], self.axis[j]]) for i, j in reversed(cells)]
+        return np.array(pts[:-1] + [goal])
 
 
 def take_turn(locks, k, held, wanted):

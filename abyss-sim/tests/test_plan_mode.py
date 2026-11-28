@@ -7,11 +7,13 @@ import math
 import os
 import sys
 
+import numpy as np
 import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "sim"))
 import plan_mode as pm  # noqa: E402
+import safe_nav as sn  # noqa: E402
 
 PLAN = os.path.join(HERE, "fixtures", "plan.json")
 R, DEPTH, N_AUV = 8.0, 8.0, 3
@@ -130,3 +132,36 @@ def test_robots_sharing_a_target_take_turns(plan):
     assert go1 and locks == {"m1": 1, "m2": 0}
     go1, held[1] = pm.take_turn(locks, 1, held[1], None)  # coverage: hands m1 back
     assert go1 and held[1] is None and locks == {"m2": 0}
+
+
+def fly_to(router, start, goal, margin, ropes, seconds=60.0):
+    """A point-mass robot under the HOCBF filter, steering the way fishfarm_demo.py does."""
+    cfg, dt = sn.DEFAULTS, 1 / 60
+    filt = sn.SafetyFilter(cfg["a_max"], cfg["drag"], cfg["alpha1"], cfg["alpha2"], R, margin,
+                           cfg["detect_radius"])
+    p, v, closest = np.array(start, float), np.zeros(2), math.inf
+    for i in range(int(seconds / dt)):
+        aim = router.aim(i * dt, p, goal, margin) if router else np.array(goal, float)
+        u = np.clip((aim - p - 1.6 * v + cfg["drag"] * v) / cfg["a_max"], -1, 1)
+        u, _ = filt.filter(p, v, u, ropes, escape=0.3)
+        v = v + (cfg["a_max"] * u - cfg["drag"] * v) * dt
+        p = p + v * dt
+        closest = min(closest, sn.clearance(p, ropes, R, cfg["vehicle_radius"]))
+        if np.linalg.norm(p - goal) < 0.1:
+            break
+    return np.linalg.norm(p - goal), closest
+
+
+def test_router_gets_round_a_rope_that_stops_the_filter_alone():
+    # A rope right between the robot and its goal, as in the recorded runs that timed out.
+    ropes = np.array([[0.0, 0.0, 0.12]])
+    start, goal = (-4.0, 0.0), (4.0, 0.0)
+    stuck, _ = fly_to(None, start, goal, 1.0, ropes)
+    off, closest = fly_to(pm.Router(ropes, R), start, goal, 1.0, ropes)
+    assert stuck > 4.0
+    assert off < 0.1 and closest > 0
+
+
+def test_router_steers_straight_when_nothing_is_in_the_way():
+    router = pm.Router(np.array([[0.0, 5.0, 0.1]]), R)
+    assert router.aim(0.0, (-3.0, 0.0), (3.0, 0.0), 0.6) == pytest.approx([3.0, 0.0])
